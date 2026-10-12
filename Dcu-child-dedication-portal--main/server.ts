@@ -1,0 +1,295 @@
+import express from 'express';
+import { createServer as createViteServer } from 'vite';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { INITIAL_DEDICATIONS, INITIAL_USERS } from './src/data/initialDedications.ts';
+import { DedicationRecord, UserProfile } from './src/types.ts';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const DATA_DIR = path.join(__dirname, 'data');
+const DEDICATIONS_FILE = path.join(DATA_DIR, 'dedications.json');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+
+// Ensure data directory and files exist
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function loadDedications(): DedicationRecord[] {
+  try {
+    if (fs.existsSync(DEDICATIONS_FILE)) {
+      const content = fs.readFileSync(DEDICATIONS_FILE, 'utf-8');
+      const data = JSON.parse(content);
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.error('Error reading dedications file:', err);
+  }
+  // Initialize with retained data
+  fs.writeFileSync(DEDICATIONS_FILE, JSON.stringify(INITIAL_DEDICATIONS, null, 2));
+  return INITIAL_DEDICATIONS;
+}
+
+function saveDedications(data: DedicationRecord[]) {
+  try {
+    fs.writeFileSync(DEDICATIONS_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('Error saving dedications file:', err);
+  }
+}
+
+function loadUsers(): UserProfile[] {
+  try {
+    if (fs.existsSync(USERS_FILE)) {
+      const content = fs.readFileSync(USERS_FILE, 'utf-8');
+      const data = JSON.parse(content);
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.error('Error reading users file:', err);
+  }
+  fs.writeFileSync(USERS_FILE, JSON.stringify(INITIAL_USERS, null, 2));
+  return INITIAL_USERS;
+}
+
+function saveUsers(data: UserProfile[]) {
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('Error saving users file:', err);
+  }
+}
+
+async function startServer() {
+  const app = express();
+  const PORT = Number(process.env.PORT) || 3000;
+
+  app.use(express.json({ limit: '10mb' }));
+
+  // API Endpoints
+  // 1. Get all dedications
+  app.get('/api/dedications', (_req, res) => {
+    const list = loadDedications();
+    res.json(list);
+  });
+
+  // 2. Create dedication
+  app.post('/api/dedications', (req, res) => {
+    const dedications = loadDedications();
+    const newRecord: DedicationRecord = {
+      ...req.body,
+      id: req.body.id || `DED-${new Date().getFullYear()}-${String(dedications.length + 1).padStart(3, '0')}`,
+      status: req.body.status || 'submitted',
+      leadershipConfirmed: req.body.leadershipConfirmed ?? false,
+      certificateIssued: req.body.certificateIssued ?? false,
+      certificateNumber: req.body.certificateNumber || `DCU-DED-${new Date().getFullYear()}-${String(dedications.length + 90).padStart(3, '0')}`,
+      createdAt: req.body.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    dedications.unshift(newRecord);
+    saveDedications(dedications);
+    res.status(201).json(newRecord);
+  });
+
+  // 3. Update dedication
+  app.put('/api/dedications/:id', (req, res) => {
+    const { id } = req.params;
+    const dedications = loadDedications();
+    const index = dedications.findIndex(d => d.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: 'Record not found' });
+    }
+
+    dedications[index] = {
+      ...dedications[index],
+      ...req.body,
+      id,
+      updatedAt: new Date().toISOString()
+    };
+
+    saveDedications(dedications);
+    res.json(dedications[index]);
+  });
+
+  // 4. Delete dedication
+  app.delete('/api/dedications/:id', (req, res) => {
+    const { id } = req.params;
+    let dedications = loadDedications();
+    const beforeCount = dedications.length;
+    dedications = dedications.filter(d => d.id !== id);
+    if (dedications.length === beforeCount) {
+      return res.status(404).json({ error: 'Record not found' });
+    }
+    saveDedications(dedications);
+    res.json({ success: true, message: 'Record deleted' });
+  });
+
+  // 5. Bulk import dedications (e.g. from Excel)
+  app.post('/api/dedications/bulk-import', (req, res) => {
+    const items = req.body;
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ error: 'Array of records expected' });
+    }
+
+    const current = loadDedications();
+    const now = new Date().toISOString();
+
+    const formatted: DedicationRecord[] = items.map((rec, i) => {
+      const county = rec.childCountyOfBirth || rec.childPlaceOfBirth || 'Nairobi';
+      return {
+        id: rec.id || `DED-${new Date().getFullYear()}-${String(current.length + i + 1).padStart(3, '0')}`,
+        childName: rec.childName || 'Child Name',
+        childDob: rec.childDob || '2026-01-01',
+        childGender: (rec.childGender === 'Female' ? 'Female' : 'Male'),
+        childCountyOfBirth: county,
+        childPlaceOfBirth: county,
+        fatherName: rec.fatherName || rec.parentName || 'Father',
+        fatherPhone: rec.fatherPhone || rec.parentPhone || '',
+        fatherEmail: rec.fatherEmail || rec.parentEmail || '',
+        motherName: rec.motherName || 'Mother',
+        motherPhone: rec.motherPhone || '',
+        motherEmail: rec.motherEmail || '',
+        parentName: rec.parentName || `${rec.fatherName || ''} & ${rec.motherName || ''}`.trim(),
+        parentPhone: rec.parentPhone || rec.fatherPhone || rec.motherPhone || '',
+        parentEmail: rec.parentEmail || rec.fatherEmail || rec.motherEmail || '',
+        parentRelationship: rec.parentRelationship || 'Parents',
+        isInFellowship: rec.isInFellowship ?? (rec.selectedZone && rec.selectedZone !== 'Unallocated'),
+        selectedZone: rec.selectedZone || 'Zone A',
+        selectedFellowship: rec.selectedFellowship || 'Doxa',
+        residentialLocation: rec.residentialLocation || 'Utawala',
+        dataConsent: true,
+        status: rec.status || 'compiled',
+        serviceDate: rec.serviceDate || '2026-11-29',
+        leadershipConfirmed: rec.leadershipConfirmed ?? true,
+        officeApproved: rec.officeApproved ?? true,
+        certificateIssued: rec.certificateIssued ?? false,
+        certificateNumber: rec.certificateNumber || `DCU-DED-${new Date().getFullYear()}-${String(current.length + i + 100).padStart(3, '0')}`,
+        fellowshipNotes: rec.fellowshipNotes || 'Imported from church archive file.',
+        createdAt: rec.createdAt || now,
+        updatedAt: now
+      };
+    });
+
+    const combined = [...formatted, ...current];
+    saveDedications(combined);
+    res.json({ success: true, count: formatted.length, total: combined.length });
+  });
+
+  // 6. Users & Authentication
+  app.get('/api/users', (_req, res) => {
+    res.json(loadUsers());
+  });
+
+  // Auth: Email login
+  app.post('/api/auth/login', (req, res) => {
+    const { email, name } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const users = loadUsers();
+    let user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+
+    const isSystemAdminEmail = email.toLowerCase() === 'fawany@gmail.com' || email.toLowerCase().includes('admin');
+
+    if (!user) {
+      // Create new profile
+      user = {
+        id: `usr-${Date.now()}`,
+        email: email.toLowerCase(),
+        name: name || email.split('@')[0],
+        role: isSystemAdminEmail ? 'admin' : 'parent',
+        isApproved: true,
+        authProvider: 'email',
+        createdAt: new Date().toISOString()
+      };
+      users.push(user);
+      saveUsers(users);
+    }
+
+    res.json(user);
+  });
+
+  // Auth: Google Sign-in
+  app.post('/api/auth/google', (req, res) => {
+    const { email, name, avatar } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Google email is required' });
+    }
+
+    const users = loadUsers();
+    let user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+
+    const isSystemAdminEmail = email.toLowerCase() === 'fawany@gmail.com' || email.toLowerCase().includes('admin');
+
+    if (!user) {
+      user = {
+        id: `usr-${Date.now()}`,
+        email: email.toLowerCase(),
+        name: name || email.split('@')[0],
+        avatar: avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || email)}`,
+        role: isSystemAdminEmail ? 'admin' : 'parent',
+        isApproved: true,
+        authProvider: 'google',
+        createdAt: new Date().toISOString()
+      };
+      users.push(user);
+      saveUsers(users);
+    } else {
+      if (avatar && !user.avatar) {
+        user.avatar = avatar;
+        saveUsers(users);
+      }
+    }
+
+    res.json(user);
+  });
+
+  // Update user profile/role/approval
+  app.put('/api/users/:id', (req, res) => {
+    const { id } = req.params;
+    const users = loadUsers();
+    const index = users.findIndex(u => u.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    users[index] = {
+      ...users[index],
+      ...req.body
+    };
+    saveUsers(users);
+    res.json(users[index]);
+  });
+
+  // Setup Vite in Dev or Static in Production
+  if (process.env.NODE_ENV === 'production' && fs.existsSync(path.join(__dirname, 'dist'))) {
+    app.use(express.static(path.join(__dirname, 'dist')));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+    });
+  } else {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa'
+    });
+    app.use(vite.middlewares);
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Deliverance Church Utawala portal running on http://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer().catch(err => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});
