@@ -1,0 +1,84 @@
+[
+  {
+    "id": "usr-admin-1",
+    "email": "fawany@gmail.com",
+    "name": "Fawany (Administrator)",
+    "role": "admin",
+    "isApproved": true,
+    "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+    "authProvider": "google",
+    "phone": "0723 102273",
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "id": "usr-leader-zoneA",
+    "email": "zoneA.leader@dcutawala.org",
+    "name": "Zone A Fellowship Leader",
+    "role": "fellowship_leader",
+    "assignedZone": "Zone A",
+    "isApproved": true,
+    "avatar": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80",
+    "authProvider": "google",
+    "phone": "0722 001 002",
+    "createdAt": "2026-01-10T00:00:00.000Z"
+  },
+  {
+    "id": "usr-leader-zoneB",
+    "email": "zoneB.leader@dcutawala.org",
+    "name": "Zone B Fellowship Leader",
+    "role": "fellowship_leader",
+    "assignedZone": "Zone B",
+    "isApproved": true,
+    "avatar": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80",
+    "authProvider": "google",
+    "phone": "0722 003 004",
+    "createdAt": "2026-01-12T00:00:00.000Z"
+  },
+  {
+    "id": "usr-leader-zoneC",
+    "email": "zoneC.leader@dcutawala.org",
+    "name": "Zone C Fellowship Leader",
+    "role": "fellowship_leader",
+    "assignedZone": "Zone C",
+    "isApproved": true,
+    "avatar": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80",
+    "authProvider": "google",
+    "phone": "0722 005 006",
+    "createdAt": "2026-01-14T00:00:00.000Z"
+  },
+  {
+    "id": "usr-leader-zoneD",
+    "email": "zoneD.leader@dcutawala.org",
+    "name": "Zone D Fellowship Leader",
+    "role": "fellowship_leader",
+    "assignedZone": "Zone D",
+    "isApproved": true,
+    "avatar": "https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=150&auto=format&fit=crop&q=80",
+    "authProvider": "google",
+    "phone": "0722 007 008",
+    "createdAt": "2026-01-16T00:00:00.000Z"
+  },
+  {
+    "id": "usr-leader-zoneE",
+    "email": "zoneE.leader@dcutawala.org",
+    "name": "Zone E Fellowship Leader",
+    "role": "fellowship_leader",
+    "assignedZone": "Zone E",
+    "isApproved": true,
+    "avatar": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80",
+    "authProvider": "google",
+    "phone": "0722 009 010",
+    "createdAt": "2026-01-18T00:00:00.000Z"
+  },
+  {
+    "id": "usr-parent-1",
+    "email": "dmutua@gmail.com",
+    "name": "Daniel Mutua Kilonzo",
+    "role": "parent",
+    "isApproved": true,
+    "avatar": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80",
+    "authProvider": "google",
+    "phone": "0722 134 567",
+    "createdAt": "2026-09-14T08:30:00.000Z"
+  }
+]
