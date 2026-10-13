@@ -16,9 +16,9 @@ import { CertificateModal } from './components/CertificateModal';
 import { AuthModal } from './components/AuthModal';
 import { ChurchLogo } from './components/ChurchLogo';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { DedicationRecord } from './types';
+import { DedicationRecord, PastDedicationRecord } from './types';
 import { api } from './services/api';
-import { Phone, Mail, MapPin, Shield } from 'lucide-react';
+import { Phone, Mail, MapPin, Shield, Download } from 'lucide-react';
 
 function MainApp() {
   const { user, isPastorOrLeader, openAuthModal } = useAuth();
@@ -34,24 +34,29 @@ function MainApp() {
   // 8. Past data list
   const [currentTab, setCurrentTab] = useState<string>('about');
   const [dedications, setDedications] = useState<DedicationRecord[]>([]);
+  const [pastDedications, setPastDedications] = useState<PastDedicationRecord[]>([]);
   const [selectedCertificate, setSelectedCertificate] = useState<DedicationRecord | null>(null);
   const [trackerQuery, setTrackerQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load dedications
+  // Load live dedications and isolated past dedications archive
   useEffect(() => {
     async function loadData() {
       try {
-        const data = await api.getDedications();
-        setDedications(data);
+        const [active, past] = await Promise.all([
+          api.getDedications(),
+          api.getPastDedications()
+        ]);
+        setDedications(active);
+        setPastDedications(past);
       } catch (e) {
-        console.error('Failed to load dedications', e);
+        console.error('Failed to load portal data', e);
       } finally {
         setIsLoading(false);
       }
     }
     loadData();
-  }, []);
+  }, [user]);
 
   const handleCreateDedication = (newRecord: DedicationRecord) => {
     setDedications((prev) => [newRecord, ...prev]);
@@ -82,6 +87,44 @@ function MainApp() {
       setDedications(fresh);
     } catch (e) {
       console.error('Bulk import failed', e);
+    }
+  };
+
+  // Past Historical Dedications Handlers (Completely isolated from active pipeline)
+  const handleAddPastDedication = async (newRec: Partial<PastDedicationRecord>) => {
+    try {
+      const created = await api.createPastDedication(newRec);
+      setPastDedications((prev) => [created, ...prev]);
+    } catch (e) {
+      console.error('Failed to add past record', e);
+    }
+  };
+
+  const handleBulkImportPast = async (records: any[]) => {
+    try {
+      await api.bulkImportPastDedications(records);
+      const fresh = await api.getPastDedications();
+      setPastDedications(fresh);
+    } catch (e) {
+      console.error('Failed to bulk import past records', e);
+    }
+  };
+
+  const handleUpdatePastDedication = async (id: string, updates: Partial<PastDedicationRecord>) => {
+    try {
+      const updated = await api.updatePastDedication(id, updates);
+      setPastDedications((prev) => prev.map((d) => (d.id === id ? updated : d)));
+    } catch (e) {
+      console.error('Failed to update past record', e);
+    }
+  };
+
+  const handleDeletePastDedication = async (id: string) => {
+    try {
+      await api.deletePastDedication(id);
+      setPastDedications((prev) => prev.filter((d) => d.id !== id));
+    } catch (e) {
+      console.error('Failed to delete past record', e);
     }
   };
 
@@ -117,7 +160,7 @@ function MainApp() {
         {currentTab === 'home' && (
           <Home
             onNavigate={(tab) => setCurrentTab(tab)}
-            totalRecordsCount={dedications.length}
+            totalRecordsCount={dedications.length + pastDedications.length}
           />
         )}
 
@@ -195,11 +238,15 @@ function MainApp() {
           )
         )}
 
-        {/* Tab 8: Past data list (Archived dedicated children) */}
+        {/* Tab 8: Past data list (Archived dedicated children since 2009) */}
         {currentTab === 'past_data' && (
           isOfficeAdmin ? (
             <PastDataList
-              dedications={dedications}
+              pastDedications={pastDedications}
+              onAddPastDedication={handleAddPastDedication}
+              onBulkImportPast={handleBulkImportPast}
+              onUpdatePastDedication={handleUpdatePastDedication}
+              onDeletePastDedication={handleDeletePastDedication}
               onOpenCertificate={(record) => setSelectedCertificate(record)}
             />
           ) : (
@@ -312,6 +359,17 @@ function MainApp() {
                 <Mail className="w-3.5 h-3.5 text-[#d4af37] shrink-0" />
                 dcutawala@gmail.com
               </p>
+              <div className="pt-2">
+                <a
+                  href="/api/export/download-zip"
+                  download="dcu-child-dedication-portal.zip"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#d4af37]/20 hover:bg-[#d4af37]/35 text-[#ffd700] border border-[#d4af37]/50 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02] shadow-sm cursor-pointer"
+                  title="Download complete project ZIP source code for GitHub / Vercel"
+                >
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                  <span>Download Project ZIP</span>
+                </a>
+              </div>
             </div>
           </div>
 
@@ -319,9 +377,20 @@ function MainApp() {
             <p>
               &copy; {new Date().getFullYear()} Deliverance Church International Utawala. All Rights Reserved.
             </p>
-            <p className="text-[#ffd700] flex items-center gap-1">
-              Zones A to E Fellowship Care • Church Office Compilation
-            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <a
+                href="/api/export/download-zip"
+                download="dcu-child-dedication-portal.zip"
+                className="text-amber-300 hover:text-amber-200 inline-flex items-center gap-1 font-semibold underline underline-offset-2 transition-colors cursor-pointer"
+              >
+                <Download className="w-3 h-3" />
+                <span>Download Portal Source (.ZIP)</span>
+              </a>
+              <span className="text-[#ffd700] hidden sm:inline">•</span>
+              <p className="text-[#ffd700] flex items-center gap-1">
+                Zones A to E Fellowship Care • Church Office Compilation
+              </p>
+            </div>
           </div>
         </div>
       </footer>

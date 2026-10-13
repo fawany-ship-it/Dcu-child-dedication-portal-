@@ -1,31 +1,46 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { UserProfile, UserRole } from '../types';
-import { api } from '../services/api';
+import { api, getSessionToken, setSessionToken } from '../services/api';
 
 interface AuthContextType {
   user: UserProfile | null;
-  isAdmin: boolean;
-  isOfficeAdmin: boolean;
+  loading: boolean;
+  isSuperAdmin: boolean;
+  isAdmin: boolean; // super_admin or office_admin
+  isOfficeAdmin: boolean; // super_admin, office_admin, or pastor
+  isPastor: boolean;
+  isFellowshipLeader: boolean;
   isPastorOrLeader: boolean;
-  loginWithEmail: (email: string, password?: string, name?: string, role?: UserRole, assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E') => Promise<void>;
+  isParent: boolean;
+  isStaff: boolean;
+  loginWithEmail: (email: string, password: string) => Promise<void>;
   createAccount: (data: {
     email: string;
+    password: string;
     name: string;
-    password?: string;
-    role: UserRole;
-    assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E';
     phone?: string;
   }) => Promise<void>;
   loginWithGoogle: (preset?: { 
-    email: string; 
+    email?: string; 
     name?: string; 
-    avatar?: string; 
-    role?: UserRole; 
-    assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E' 
+    avatar?: string;
+    invitationToken?: string;
   }) => Promise<void>;
-  switchUserRole: (role: UserRole, assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E') => void;
-  switchAssignedZone: (zone: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E') => void;
-  logout: () => void;
+  acceptInvitation: (payload: {
+    token: string;
+    email: string;
+    password: string;
+    name?: string;
+    phone?: string;
+  }) => Promise<void>;
+  bootstrapAdmin: (payload: {
+    bootstrapSecret: string;
+    email: string;
+    password: string;
+    name?: string;
+  }) => Promise<void>;
+  refreshUser: () => Promise<void>;
+  logout: () => Promise<void>;
   isAuthModalOpen: boolean;
   openAuthModal: () => void;
   closeAuthModal: () => void;
@@ -33,130 +48,133 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const USER_SESSION_KEY = 'dcu_current_user_session_v3';
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // STRICT REQUIREMENT: App must start as unauthenticated (user = null) for general public
-  // No auto-login as admin on page load.
-  const [user, setUser] = useState<UserProfile | null>(() => {
-    try {
-      // Clean up any legacy default test sessions
-      localStorage.removeItem('dcu_current_user_session_v2');
-      const stored = localStorage.getItem(USER_SESSION_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        // Only restore if user explicitly signed in with real non-mock credentials
-        if (parsed && parsed.email && parsed.id && parsed.id !== 'usr-admin-1') {
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.warn('Could not read user session', e);
-    }
-    // Clean visitor state: NOT logged in
-    return null;
-  });
-
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem(USER_SESSION_KEY, JSON.stringify(user));
-    } else {
-      localStorage.removeItem(USER_SESSION_KEY);
+  // Validate server session on mount
+  const refreshUser = useCallback(async () => {
+    const token = getSessionToken();
+    if (!token) {
+      setUser(null);
+      setLoading(false);
+      return;
     }
-  }, [user]);
 
-  const loginWithEmail = async (
-    email: string, 
-    _password?: string, 
-    name?: string, 
-    role?: UserRole, 
-    assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E'
-  ) => {
-    const profile = await api.login(email, name, role, assignedZone);
-    setUser(profile);
+    try {
+      const profile = await api.getMe();
+      setUser(profile);
+    } catch (err) {
+      console.warn('Session verification failed, logging out', err);
+      setSessionToken(null);
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshUser();
+  }, [refreshUser]);
+
+  const loginWithEmail = async (email: string, password: string) => {
+    const res = await api.login(email, password);
+    setUser(res.user);
     setIsAuthModalOpen(false);
   };
 
   const createAccount = async (data: {
     email: string;
+    password: string;
     name: string;
-    password?: string;
-    role: UserRole;
-    assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E';
     phone?: string;
   }) => {
-    const profile = await api.createAccount(data);
-    setUser(profile);
+    const res = await api.registerParent(data);
+    setUser(res.user);
     setIsAuthModalOpen(false);
   };
 
   const loginWithGoogle = async (preset?: { 
-    email: string; 
+    email?: string; 
     name?: string; 
-    avatar?: string; 
-    role?: UserRole; 
-    assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E' 
+    avatar?: string;
+    invitationToken?: string;
   }) => {
-    const emailToUse = preset?.email || 'fawany@gmail.com';
+    const emailToUse = preset?.email || 'parent.visitor@gmail.com';
     const nameToUse = preset?.name || (emailToUse.split('@')[0]);
     const avatarToUse = preset?.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(nameToUse)}`;
 
-    const profile = await api.loginGoogle(emailToUse, nameToUse, avatarToUse, preset?.role, preset?.assignedZone);
-    if (preset?.role) {
-      profile.role = preset.role;
-    }
-    if (preset?.assignedZone) {
-      profile.assignedZone = preset.assignedZone;
-    }
-    // If logging in with fawany@gmail.com, ensure admin role
-    if (emailToUse.toLowerCase() === 'fawany@gmail.com') {
-      profile.role = 'admin';
-      profile.name = 'Fawany (Administrator)';
-    }
+    const res = await api.loginGoogle({
+      email: emailToUse,
+      name: nameToUse,
+      avatar: avatarToUse,
+      invitationToken: preset?.invitationToken
+    });
 
-    setUser(profile);
+    setUser(res.user);
     setIsAuthModalOpen(false);
   };
 
-  const switchUserRole = (newRole: UserRole, assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E') => {
-    if (!user) return;
-    const updated: UserProfile = { 
-      ...user, 
-      role: newRole,
-      assignedZone: assignedZone || (newRole === 'fellowship_leader' ? (user.assignedZone || 'Zone A') : user.assignedZone)
-    };
-    setUser(updated);
+  const acceptInvitation = async (payload: {
+    token: string;
+    email: string;
+    password: string;
+    name?: string;
+    phone?: string;
+  }) => {
+    const res = await api.acceptInvitation(payload);
+    setUser(res.user);
+    setIsAuthModalOpen(false);
   };
 
-  const switchAssignedZone = (zone: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E') => {
-    if (!user) return;
-    const updated: UserProfile = { ...user, assignedZone: zone };
-    setUser(updated);
+  const bootstrapAdmin = async (payload: {
+    bootstrapSecret: string;
+    email: string;
+    password: string;
+    name?: string;
+  }) => {
+    const res = await api.bootstrapAdmin(payload);
+    setUser(res.user);
+    setIsAuthModalOpen(false);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await api.logout();
     setUser(null);
-    localStorage.removeItem(USER_SESSION_KEY);
   };
 
-  const isAdmin = user?.role === 'admin';
-  const isOfficeAdmin = user?.role === 'admin' || user?.role === 'pastor';
-  const isPastorOrLeader = user?.role === 'admin' || user?.role === 'pastor' || user?.role === 'fellowship_leader';
+  // Canonical Role Checks
+  const normalizedRole: UserRole | undefined = user?.role === 'admin' ? 'super_admin' : user?.role;
+
+  const isSuperAdmin = normalizedRole === 'super_admin';
+  const isOfficeAdmin = isSuperAdmin || normalizedRole === 'office_admin';
+  const isPastor = isOfficeAdmin || normalizedRole === 'pastor';
+  const isFellowshipLeader = normalizedRole === 'fellowship_leader';
+  const isPastorOrLeader = isPastor || isFellowshipLeader;
+  const isStaff = isSuperAdmin || normalizedRole === 'office_admin' || normalizedRole === 'pastor' || normalizedRole === 'fellowship_leader';
+  const isParent = normalizedRole === 'parent';
+  const isAdmin = isSuperAdmin || normalizedRole === 'office_admin';
 
   return (
     <AuthContext.Provider
       value={{
         user,
+        loading,
+        isSuperAdmin,
         isAdmin,
         isOfficeAdmin,
+        isPastor,
+        isFellowshipLeader,
         isPastorOrLeader,
+        isParent,
+        isStaff,
         loginWithEmail,
         createAccount,
         loginWithGoogle,
-        switchUserRole,
-        switchAssignedZone,
+        acceptInvitation,
+        bootstrapAdmin,
+        refreshUser,
         logout,
         isAuthModalOpen,
         openAuthModal: () => setIsAuthModalOpen(true),

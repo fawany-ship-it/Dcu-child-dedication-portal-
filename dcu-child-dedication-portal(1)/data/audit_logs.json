@@ -1,0 +1,503 @@
+[
+  {
+    "id": "audit-1791900283366-50b1ce98",
+    "timestamp": "2026-10-13T14:04:43.366Z",
+    "eventType": "AUTH_GOOGLE_LOGIN_SUCCESS",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "super_admin",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1"
+  },
+  {
+    "id": "audit-1791900279290-28372990",
+    "timestamp": "2026-10-13T14:04:39.290Z",
+    "eventType": "AUTH_LOGIN_SUCCESS",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "super_admin",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "requiresMfa": false
+    }
+  },
+  {
+    "id": "audit-1791897885038-9f72e974",
+    "timestamp": "2026-10-13T13:24:45.038Z",
+    "eventType": "SUSPENDED_ACCOUNT_LOGIN_BLOCKED",
+    "actorId": "usr-staff-1791897885021",
+    "actorEmail": "staff.to.suspend.1791897884966@example.com",
+    "actorRole": "fellowship_leader",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1"
+  },
+  {
+    "id": "audit-1791897885029-480ec0c7",
+    "timestamp": "2026-10-13T13:24:45.030Z",
+    "eventType": "USER_SUSPENDED",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "public",
+    "targetId": "usr-staff-1791897885021",
+    "targetType": "user",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "targetEmail": "staff.to.suspend.1791897884966@example.com"
+    }
+  },
+  {
+    "id": "audit-1791897885021-5f18e981",
+    "timestamp": "2026-10-13T13:24:45.021Z",
+    "eventType": "STAFF_INVITATION_ACCEPTED",
+    "actorId": "usr-staff-1791897885021",
+    "actorEmail": "staff.to.suspend.1791897884966@example.com",
+    "actorRole": "fellowship_leader",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "invitationId": "inv-1791897884970-2a404d",
+      "role": "fellowship_leader",
+      "assignedZone": "Zone C"
+    }
+  },
+  {
+    "id": "audit-1791897884970-85981286",
+    "timestamp": "2026-10-13T13:24:44.970Z",
+    "eventType": "STAFF_INVITATION_CREATED",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "public",
+    "targetId": "inv-1791897884970-2a404d",
+    "targetType": "invitation",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "invitedEmail": "staff.to.suspend.1791897884966@example.com",
+      "role": "fellowship_leader",
+      "assignedZone": "Zone C"
+    }
+  },
+  {
+    "id": "audit-1791897884961-97d36ba1",
+    "timestamp": "2026-10-13T13:24:44.961Z",
+    "eventType": "STAFF_INVITATION_REVOKED",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "public",
+    "targetId": "inv-1791897884956-cad9f5",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1"
+  },
+  {
+    "id": "audit-1791897884956-f2614f51",
+    "timestamp": "2026-10-13T13:24:44.956Z",
+    "eventType": "STAFF_INVITATION_CREATED",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "public",
+    "targetId": "inv-1791897884956-cad9f5",
+    "targetType": "invitation",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "invitedEmail": "invited.pastor.1791897884952@example.com",
+      "role": "pastor"
+    }
+  },
+  {
+    "id": "audit-1791897884950-0dcd103a",
+    "timestamp": "2026-10-13T13:24:44.950Z",
+    "eventType": "DEDICATION_CREATED",
+    "actorId": "public-parent",
+    "actorEmail": "public-visitor",
+    "actorRole": "parent",
+    "targetId": "DED-2026-013",
+    "targetType": "dedication",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "childName": "Tamper Test Child",
+      "zone": "Zone A"
+    }
+  },
+  {
+    "id": "audit-1791897884945-d21c94fc",
+    "timestamp": "2026-10-13T13:24:44.945Z",
+    "eventType": "ACCESS_DENIED_UNAUTHORIZED_ROLE",
+    "actorId": "usr-leader-zoneA",
+    "actorEmail": "zoneA.leader@dcutawala.org",
+    "actorRole": "fellowship_leader",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1",
+    "details": {
+      "path": "/api/users/invite",
+      "method": "POST",
+      "requiredRoles": [
+        "super_admin"
+      ]
+    }
+  },
+  {
+    "id": "audit-1791897884939-82b3e0e4",
+    "timestamp": "2026-10-13T13:24:44.939Z",
+    "eventType": "ACCESS_DENIED_UNAUTHORIZED_ROLE",
+    "actorId": "usr-leader-zoneA",
+    "actorEmail": "zoneA.leader@dcutawala.org",
+    "actorRole": "fellowship_leader",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1",
+    "details": {
+      "path": "/api/audit-logs",
+      "method": "GET",
+      "requiredRoles": [
+        "super_admin"
+      ]
+    }
+  },
+  {
+    "id": "audit-1791897884934-f9fdddfb",
+    "timestamp": "2026-10-13T13:24:44.934Z",
+    "eventType": "CROSS_ZONE_TAMPER_BLOCKED",
+    "actorId": "usr-leader-zoneA",
+    "actorEmail": "zoneA.leader@dcutawala.org",
+    "actorRole": "fellowship_leader",
+    "targetId": "DED-2026-002",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1",
+    "details": {
+      "recordZone": "Zone B",
+      "leaderZone": "Zone A"
+    }
+  },
+  {
+    "id": "audit-1791897884915-8089ed50",
+    "timestamp": "2026-10-13T13:24:44.915Z",
+    "eventType": "AUTH_LOGIN_SUCCESS",
+    "actorId": "usr-leader-zoneA",
+    "actorEmail": "zoneA.leader@dcutawala.org",
+    "actorRole": "fellowship_leader",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "requiresMfa": false
+    }
+  },
+  {
+    "id": "audit-1791897884855-a6a264e8",
+    "timestamp": "2026-10-13T13:24:44.855Z",
+    "eventType": "DEDICATION_CREATED",
+    "actorId": "usr-parent-1791897884847",
+    "actorEmail": "test.parent.1791897884614@example.com",
+    "actorRole": "parent",
+    "targetId": "DED-2026-012",
+    "targetType": "dedication",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "childName": "Baby Jessica Mutua",
+      "zone": "Zone A"
+    }
+  },
+  {
+    "id": "audit-1791897884847-b1d8a9c5",
+    "timestamp": "2026-10-13T13:24:44.847Z",
+    "eventType": "PARENT_REGISTERED",
+    "actorId": "usr-parent-1791897884847",
+    "actorEmail": "test.parent.1791897884614@example.com",
+    "actorRole": "parent",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1"
+  },
+  {
+    "id": "audit-1791897884780-df37b911",
+    "timestamp": "2026-10-13T13:24:44.780Z",
+    "eventType": "AUTH_LOGIN_SUCCESS",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "super_admin",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "requiresMfa": false
+    }
+  },
+  {
+    "id": "audit-1791897884649-39e00606",
+    "timestamp": "2026-10-13T13:24:44.649Z",
+    "eventType": "PARENT_REGISTERED_VIA_GOOGLE",
+    "actorId": "usr-parent-1791897884649",
+    "actorEmail": "unauthorized.google.1791897884644@gmail.com",
+    "actorRole": "parent",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1"
+  },
+  {
+    "id": "audit-1791897884642-47189f63",
+    "timestamp": "2026-10-13T13:24:44.642Z",
+    "eventType": "PRIVILEGE_ESCALATION_BLOCKED",
+    "actorId": "system",
+    "actorEmail": "hacker.pastor.1791897884637@gmail.com",
+    "actorRole": "public",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1",
+    "details": {
+      "attemptedRole": "pastor",
+      "reason": "Public registration attempted to request privileged role"
+    }
+  },
+  {
+    "id": "audit-1791897884635-68571a39",
+    "timestamp": "2026-10-13T13:24:44.635Z",
+    "eventType": "PRIVILEGE_ESCALATION_BLOCKED",
+    "actorId": "system",
+    "actorEmail": "hacker.admin.1791897884614@gmail.com",
+    "actorRole": "public",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1",
+    "details": {
+      "attemptedRole": "admin",
+      "reason": "Public registration attempted to request privileged role"
+    }
+  },
+  {
+    "id": "audit-1791883249605-1f696d85",
+    "timestamp": "2026-10-13T09:20:49.605Z",
+    "eventType": "SUSPENDED_ACCOUNT_LOGIN_BLOCKED",
+    "actorId": "usr-staff-1791883249576",
+    "actorEmail": "staff.to.suspend.1791883249510@example.com",
+    "actorRole": "fellowship_leader",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1"
+  },
+  {
+    "id": "audit-1791883249592-e5124428",
+    "timestamp": "2026-10-13T09:20:49.592Z",
+    "eventType": "USER_SUSPENDED",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "public",
+    "targetId": "usr-staff-1791883249576",
+    "targetType": "user",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "targetEmail": "staff.to.suspend.1791883249510@example.com"
+    }
+  },
+  {
+    "id": "audit-1791883249577-170b7e2d",
+    "timestamp": "2026-10-13T09:20:49.577Z",
+    "eventType": "STAFF_INVITATION_ACCEPTED",
+    "actorId": "usr-staff-1791883249576",
+    "actorEmail": "staff.to.suspend.1791883249510@example.com",
+    "actorRole": "fellowship_leader",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "invitationId": "inv-1791883249516-52cdb7",
+      "role": "fellowship_leader",
+      "assignedZone": "Zone C"
+    }
+  },
+  {
+    "id": "audit-1791883249516-b947b73a",
+    "timestamp": "2026-10-13T09:20:49.516Z",
+    "eventType": "STAFF_INVITATION_CREATED",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "public",
+    "targetId": "inv-1791883249516-52cdb7",
+    "targetType": "invitation",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "invitedEmail": "staff.to.suspend.1791883249510@example.com",
+      "role": "fellowship_leader",
+      "assignedZone": "Zone C"
+    }
+  },
+  {
+    "id": "audit-1791883249497-d466b46a",
+    "timestamp": "2026-10-13T09:20:49.497Z",
+    "eventType": "STAFF_INVITATION_REVOKED",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "public",
+    "targetId": "inv-1791883249488-46c4d1",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1"
+  },
+  {
+    "id": "audit-1791883249488-a8a8378c",
+    "timestamp": "2026-10-13T09:20:49.488Z",
+    "eventType": "STAFF_INVITATION_CREATED",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "public",
+    "targetId": "inv-1791883249488-46c4d1",
+    "targetType": "invitation",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "invitedEmail": "invited.pastor.1791883249479@example.com",
+      "role": "pastor"
+    }
+  },
+  {
+    "id": "audit-1791883249474-84ad38b7",
+    "timestamp": "2026-10-13T09:20:49.474Z",
+    "eventType": "DEDICATION_CREATED",
+    "actorId": "public-parent",
+    "actorEmail": "public-visitor",
+    "actorRole": "parent",
+    "targetId": "DED-2026-011",
+    "targetType": "dedication",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "childName": "Tamper Test Child",
+      "zone": "Zone A"
+    }
+  },
+  {
+    "id": "audit-1791883249456-317644d8",
+    "timestamp": "2026-10-13T09:20:49.456Z",
+    "eventType": "ACCESS_DENIED_UNAUTHORIZED_ROLE",
+    "actorId": "usr-leader-zoneA",
+    "actorEmail": "zoneA.leader@dcutawala.org",
+    "actorRole": "fellowship_leader",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1",
+    "details": {
+      "path": "/api/users/invite",
+      "method": "POST",
+      "requiredRoles": [
+        "super_admin"
+      ]
+    }
+  },
+  {
+    "id": "audit-1791883249445-6462cc3d",
+    "timestamp": "2026-10-13T09:20:49.445Z",
+    "eventType": "ACCESS_DENIED_UNAUTHORIZED_ROLE",
+    "actorId": "usr-leader-zoneA",
+    "actorEmail": "zoneA.leader@dcutawala.org",
+    "actorRole": "fellowship_leader",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1",
+    "details": {
+      "path": "/api/audit-logs",
+      "method": "GET",
+      "requiredRoles": [
+        "super_admin"
+      ]
+    }
+  },
+  {
+    "id": "audit-1791883249436-7439cc7d",
+    "timestamp": "2026-10-13T09:20:49.436Z",
+    "eventType": "CROSS_ZONE_TAMPER_BLOCKED",
+    "actorId": "usr-leader-zoneA",
+    "actorEmail": "zoneA.leader@dcutawala.org",
+    "actorRole": "fellowship_leader",
+    "targetId": "DED-2026-002",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1",
+    "details": {
+      "recordZone": "Zone B",
+      "leaderZone": "Zone A"
+    }
+  },
+  {
+    "id": "audit-1791883249411-2342654f",
+    "timestamp": "2026-10-13T09:20:49.411Z",
+    "eventType": "AUTH_LOGIN_SUCCESS",
+    "actorId": "usr-leader-zoneA",
+    "actorEmail": "zoneA.leader@dcutawala.org",
+    "actorRole": "fellowship_leader",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "requiresMfa": false
+    }
+  },
+  {
+    "id": "audit-1791883249298-e9f8d711",
+    "timestamp": "2026-10-13T09:20:49.298Z",
+    "eventType": "DEDICATION_CREATED",
+    "actorId": "usr-parent-1791883249271",
+    "actorEmail": "test.parent.1791883248933@example.com",
+    "actorRole": "parent",
+    "targetId": "DED-2026-010",
+    "targetType": "dedication",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "childName": "Baby Jessica Mutua",
+      "zone": "Zone A"
+    }
+  },
+  {
+    "id": "audit-1791883249272-9cde2e68",
+    "timestamp": "2026-10-13T09:20:49.272Z",
+    "eventType": "PARENT_REGISTERED",
+    "actorId": "usr-parent-1791883249271",
+    "actorEmail": "test.parent.1791883248933@example.com",
+    "actorRole": "parent",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1"
+  },
+  {
+    "id": "audit-1791883249130-4963b93c",
+    "timestamp": "2026-10-13T09:20:49.130Z",
+    "eventType": "AUTH_LOGIN_SUCCESS",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "super_admin",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "requiresMfa": false
+    }
+  },
+  {
+    "id": "audit-1791883248974-88d8a718",
+    "timestamp": "2026-10-13T09:20:48.974Z",
+    "eventType": "PARENT_REGISTERED_VIA_GOOGLE",
+    "actorId": "usr-parent-1791883248974",
+    "actorEmail": "unauthorized.google.1791883248968@gmail.com",
+    "actorRole": "parent",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1"
+  },
+  {
+    "id": "audit-1791883248964-4bcfb723",
+    "timestamp": "2026-10-13T09:20:48.965Z",
+    "eventType": "PRIVILEGE_ESCALATION_BLOCKED",
+    "actorId": "system",
+    "actorEmail": "hacker.pastor.1791883248960@gmail.com",
+    "actorRole": "public",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1",
+    "details": {
+      "attemptedRole": "pastor",
+      "reason": "Public registration attempted to request privileged role"
+    }
+  },
+  {
+    "id": "audit-1791883248957-5b4c8c57",
+    "timestamp": "2026-10-13T09:20:48.957Z",
+    "eventType": "PRIVILEGE_ESCALATION_BLOCKED",
+    "actorId": "system",
+    "actorEmail": "hacker.admin.1791883248933@gmail.com",
+    "actorRole": "public",
+    "outcome": "FAILURE",
+    "ip": "127.0.0.1",
+    "details": {
+      "attemptedRole": "admin",
+      "reason": "Public registration attempted to request privileged role"
+    }
+  }
+]
