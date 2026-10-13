@@ -1,0 +1,30 @@
+[
+  {
+    "id": "inv-1791883249516-52cdb7",
+    "email": "staff.to.suspend.1791883249510@example.com",
+    "name": "Staff To Suspend",
+    "role": "fellowship_leader",
+    "assignedZone": "Zone C",
+    "tokenHash": "68a31002577ceb0cfbb05e34c4727147a152809475754acad7392fd28062bec8",
+    "invitedBy": "usr-admin-1",
+    "invitedByEmail": "fawany@gmail.com",
+    "createdAt": "2026-10-13T09:20:49.516Z",
+    "expiresAt": "2026-10-20T09:20:49.516Z",
+    "status": "accepted",
+    "usedAt": "2026-10-13T09:20:49.577Z"
+  },
+  {
+    "id": "inv-1791883249488-46c4d1",
+    "email": "invited.pastor.1791883249479@example.com",
+    "name": "Pastor Candidate",
+    "role": "pastor",
+    "tokenHash": "33fc75ae47dfa5eac692afc76ded7d07950ad5cccb9f38cb730133cbae11b4ef",
+    "invitedBy": "usr-admin-1",
+    "invitedByEmail": "fawany@gmail.com",
+    "createdAt": "2026-10-13T09:20:49.488Z",
+    "expiresAt": "2026-10-20T09:20:49.488Z",
+    "status": "revoked",
+    "revokedAt": "2026-10-13T09:20:49.497Z",
+    "revokedBy": "usr-admin-1"
+  }
+]
