@@ -16,12 +16,21 @@ import { CertificateModal } from './components/CertificateModal';
 import { AuthModal } from './components/AuthModal';
 import { ChurchLogo } from './components/ChurchLogo';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { DedicationRecord } from './types';
+import { DedicationRecord, PastDedicationRecord } from './types';
 import { api } from './services/api';
 import { Phone, Mail, MapPin, Shield, Download } from 'lucide-react';
 
 function MainApp() {
-  const { user, isPastorOrLeader, openAuthModal } = useAuth();
+  const { 
+    user, 
+    isSuperAdmin, 
+    isOfficeAdmin, 
+    isPastor, 
+    isFellowshipLeader, 
+    isPastorOrLeader, 
+    isStaff, 
+    openAuthModal 
+  } = useAuth();
 
   // Tabs order:
   // 1. About DCU
@@ -34,24 +43,29 @@ function MainApp() {
   // 8. Past data list
   const [currentTab, setCurrentTab] = useState<string>('about');
   const [dedications, setDedications] = useState<DedicationRecord[]>([]);
+  const [pastDedications, setPastDedications] = useState<PastDedicationRecord[]>([]);
   const [selectedCertificate, setSelectedCertificate] = useState<DedicationRecord | null>(null);
   const [trackerQuery, setTrackerQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load dedications
+  // Load live dedications and isolated past dedications archive
   useEffect(() => {
     async function loadData() {
       try {
-        const data = await api.getDedications();
-        setDedications(data);
+        const [active, past] = await Promise.all([
+          api.getDedications(),
+          api.getPastDedications()
+        ]);
+        setDedications(active);
+        setPastDedications(past);
       } catch (e) {
-        console.error('Failed to load dedications', e);
+        console.error('Failed to load portal data', e);
       } finally {
         setIsLoading(false);
       }
     }
     loadData();
-  }, []);
+  }, [user]);
 
   const handleCreateDedication = (newRecord: DedicationRecord) => {
     setDedications((prev) => [newRecord, ...prev]);
@@ -85,13 +99,67 @@ function MainApp() {
     }
   };
 
+  // Past Historical Dedications Handlers (Completely isolated from active pipeline)
+  const handleAddPastDedication = async (newRec: Partial<PastDedicationRecord>) => {
+    try {
+      const created = await api.createPastDedication(newRec);
+      setPastDedications((prev) => [created, ...prev]);
+    } catch (e) {
+      console.error('Failed to add past record', e);
+    }
+  };
+
+  const handleBulkImportPast = async (records: any[]) => {
+    try {
+      await api.bulkImportPastDedications(records);
+      const fresh = await api.getPastDedications();
+      setPastDedications(fresh);
+    } catch (e) {
+      console.error('Failed to bulk import past records', e);
+    }
+  };
+
+  const handleUpdatePastDedication = async (id: string, updates: Partial<PastDedicationRecord>) => {
+    try {
+      const updated = await api.updatePastDedication(id, updates);
+      setPastDedications((prev) => prev.map((d) => (d.id === id ? updated : d)));
+    } catch (e) {
+      console.error('Failed to update past record', e);
+    }
+  };
+
+  const handleDeletePastDedication = async (id: string) => {
+    try {
+      await api.deletePastDedication(id);
+      setPastDedications((prev) => prev.filter((d) => d.id !== id));
+    } catch (e) {
+      console.error('Failed to delete past record', e);
+    }
+  };
+
   // Counters for tabs
   const pendingLeadershipCount = dedications.filter((d) => !d.leadershipConfirmed).length;
   const pendingOfficeCount = dedications.filter((d) => d.leadershipConfirmed && !d.officeApproved).length;
 
   // Check user authorization levels
-  const isStaffAuthenticated = user && user.role !== 'parent';
-  const isOfficeAdmin = user && (user.role === 'admin' || user.role === 'pastor');
+  const isStaffAuthenticated = isStaff;
+  const isOfficeAdminAuthorized = isOfficeAdmin || isPastor;
+
+  // Automatically switch tab when administrative staff sign in
+  useEffect(() => {
+    if (user) {
+      const normalizedRole = user.role === 'admin' ? 'super_admin' : user.role;
+      if (normalizedRole === 'super_admin' || normalizedRole === 'office_admin' || normalizedRole === 'pastor') {
+        if (currentTab === 'about' || currentTab === 'home') {
+          setCurrentTab('office_compile');
+        }
+      } else if (normalizedRole === 'fellowship_leader') {
+        if (currentTab === 'about' || currentTab === 'home') {
+          setCurrentTab('leadership');
+        }
+      }
+    }
+  }, [user]);
 
   const navigateToTrackerWithId = (refName: string) => {
     setTrackerQuery(refName);
@@ -117,7 +185,7 @@ function MainApp() {
         {currentTab === 'home' && (
           <Home
             onNavigate={(tab) => setCurrentTab(tab)}
-            totalRecordsCount={dedications.length}
+            totalRecordsCount={dedications.length + pastDedications.length}
           />
         )}
 
@@ -146,7 +214,7 @@ function MainApp() {
 
         {/* Tab 5: Office Compile (Church admins confirm & compile) */}
         {currentTab === 'office_compile' && (
-          isOfficeAdmin ? (
+          isOfficeAdminAuthorized ? (
             <OfficeCompile
               dedications={dedications}
               onUpdateDedication={handleUpdateDedication}
@@ -175,7 +243,7 @@ function MainApp() {
 
         {/* Tab 7: Data lists (Active candidate lists) */}
         {currentTab === 'data_lists' && (
-          isOfficeAdmin ? (
+          isOfficeAdminAuthorized ? (
             <DataLists
               dedications={dedications}
               onUpdateDedication={handleUpdateDedication}
@@ -195,11 +263,15 @@ function MainApp() {
           )
         )}
 
-        {/* Tab 8: Past data list (Archived dedicated children) */}
+        {/* Tab 8: Past data list (Archived dedicated children since 2009) */}
         {currentTab === 'past_data' && (
-          isOfficeAdmin ? (
+          isOfficeAdminAuthorized ? (
             <PastDataList
-              dedications={dedications}
+              pastDedications={pastDedications}
+              onAddPastDedication={handleAddPastDedication}
+              onBulkImportPast={handleBulkImportPast}
+              onUpdatePastDedication={handleUpdatePastDedication}
+              onDeletePastDedication={handleDeletePastDedication}
               onOpenCertificate={(record) => setSelectedCertificate(record)}
             />
           ) : (

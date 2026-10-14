@@ -2,7 +2,7 @@ import React from 'react';
 import { ChurchLogo } from './ChurchLogo';
 import { 
   Users, Building2, Search, List, Archive, UserCheck, 
-  LogOut, CheckCircle2, Lock 
+  LogOut, CheckCircle2, Lock, Download 
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -69,9 +69,18 @@ export function Navbar({
             <span className="text-gray-400">•</span>
             <span className="font-serif italic text-white/90">THE CHURCH OF CHOICE</span>
           </div>
-          <div className="flex items-center space-x-4 text-[11px] text-gray-300">
+          <div className="flex items-center space-x-3 text-[11px] text-gray-300">
             <span>Utawala, Nairobi, Kenya</span>
             <span>Tel: 0723 102273</span>
+            <a
+              href="/dcu-child-dedication-portal.zip"
+              download="dcu-child-dedication-portal.zip"
+              className="inline-flex items-center gap-1 bg-[#ffd700]/20 hover:bg-[#ffd700]/30 text-[#ffd700] px-2 py-0.5 rounded border border-[#ffd700]/50 font-bold transition-colors cursor-pointer"
+              title="Download full project ZIP archive for GitHub / Vercel deployment"
+            >
+              <Download className="w-3 h-3 text-[#ffd700]" />
+              Download GitHub ZIP
+            </a>
           </div>
         </div>
       </div>
@@ -126,8 +135,29 @@ export function Navbar({
 
           {/* Authentication Status / Profile */}
           <div className="flex items-center space-x-2">
+            {/* Download GitHub ZIP Link */}
+            <a
+              href="/dcu-child-dedication-portal.zip"
+              download="dcu-child-dedication-portal.zip"
+              title="Download Full Project ZIP to update GitHub"
+              className="bg-white/10 hover:bg-white/20 text-[#ffd700] border border-[#d4af37]/40 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs shrink-0"
+            >
+              <Download className="w-3.5 h-3.5 text-[#ffd700]" />
+              <span className="hidden sm:inline">GitHub ZIP</span>
+            </a>
+
             {user ? (
-              <div className="flex items-center space-x-2 bg-black/40 border border-[#d4af37]/40 px-3 py-1.5 rounded-xl shadow-md">
+              <div 
+                onClick={() => {
+                  if (user.role === 'super_admin' || user.role === 'office_admin' || user.role === 'admin') {
+                    setCurrentTab('office_compile');
+                  } else if (user.role === 'fellowship_leader') {
+                    setCurrentTab('leadership');
+                  }
+                }}
+                className="flex items-center space-x-2 bg-black/50 hover:bg-black/70 border border-[#d4af37]/60 px-3 py-1.5 rounded-xl shadow-md cursor-pointer transition-colors"
+                title="Click to open your administrative dashboard"
+              >
                 <img
                   src={user.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`}
                   alt={user.name}
@@ -140,15 +170,22 @@ export function Navbar({
                   <p className="text-[10px] text-[#ffd700] font-semibold uppercase tracking-wider">
                     {user.role === 'fellowship_leader' 
                       ? (user.assignedZone ? `${user.assignedZone} Leader` : 'Zone Leader') 
-                      : user.role === 'admin' 
+                      : user.role === 'super_admin' || user.role === 'admin'
+                      ? 'Super Administrator'
+                      : user.role === 'office_admin'
                       ? 'Church Office Admin' 
                       : user.role === 'pastor' 
-                      ? 'Pastoral Team' 
-                      : user.role.replace('_', ' ')}
+                      ? 'Pastor' 
+                      : user.role === 'parent'
+                      ? 'Parent'
+                      : String(user.role).replace('_', ' ')}
                   </p>
                 </div>
                 <button
-                  onClick={logout}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    logout();
+                  }}
                   title="Sign Out"
                   className="ml-2 bg-white/10 hover:bg-red-500/20 text-gray-200 hover:text-red-300 px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer border border-white/10"
                 >
@@ -162,7 +199,7 @@ export function Navbar({
                 className="bg-[#d4af37] hover:bg-[#e6c154] text-[#2a170e] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 shadow-md transition-all cursor-pointer whitespace-nowrap"
               >
                 <UserCheck className="w-4 h-4 text-[#2a170e]" />
-                Leadership Log In
+                Log In / Staff
               </button>
             )}
           </div>

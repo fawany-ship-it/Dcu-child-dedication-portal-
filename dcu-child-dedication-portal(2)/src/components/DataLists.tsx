@@ -7,6 +7,7 @@ import {
   Clock, Award, Trash2, Edit3, Shield
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../services/api';
 
 interface DataListsProps {
   dedications: DedicationRecord[];
@@ -82,6 +83,7 @@ export function DataLists({
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Active Dedications');
     XLSX.writeFile(workbook, `DCU_Active_Dedications_${new Date().toISOString().split('T')[0]}.xlsx`);
+    api.logExport('active_dedications_excel', exportData.length);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
