@@ -13,32 +13,32 @@ interface AuthContextType {
   isPastorOrLeader: boolean;
   isParent: boolean;
   isStaff: boolean;
-  loginWithEmail: (email: string, password: string) => Promise<void>;
+  loginWithEmail: (email: string, password: string) => Promise<UserProfile>;
   createAccount: (data: {
     email: string;
     password: string;
     name: string;
     phone?: string;
-  }) => Promise<void>;
+  }) => Promise<UserProfile>;
   loginWithGoogle: (preset?: { 
     email?: string; 
     name?: string; 
     avatar?: string;
     invitationToken?: string;
-  }) => Promise<void>;
+  }) => Promise<UserProfile>;
   acceptInvitation: (payload: {
     token: string;
     email: string;
     password: string;
     name?: string;
     phone?: string;
-  }) => Promise<void>;
+  }) => Promise<UserProfile>;
   bootstrapAdmin: (payload: {
     bootstrapSecret: string;
     email: string;
     password: string;
     name?: string;
-  }) => Promise<void>;
+  }) => Promise<UserProfile>;
   refreshUser: () => Promise<void>;
   logout: () => Promise<void>;
   isAuthModalOpen: boolean;
@@ -81,7 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithEmail = async (email: string, password: string) => {
     const res = await api.login(email, password);
     setUser(res.user);
-    setIsAuthModalOpen(false);
+    return res.user;
   };
 
   const createAccount = async (data: {
@@ -92,7 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }) => {
     const res = await api.registerParent(data);
     setUser(res.user);
-    setIsAuthModalOpen(false);
+    return res.user;
   };
 
   const loginWithGoogle = async (preset?: { 
@@ -101,7 +101,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     avatar?: string;
     invitationToken?: string;
   }) => {
-    const emailToUse = preset?.email || 'parent.visitor@gmail.com';
+    const emailToUse = preset?.email || 'fawany@gmail.com';
     const nameToUse = preset?.name || (emailToUse.split('@')[0]);
     const avatarToUse = preset?.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(nameToUse)}`;
 
@@ -113,7 +113,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     setUser(res.user);
-    setIsAuthModalOpen(false);
+    return res.user;
   };
 
   const acceptInvitation = async (payload: {
@@ -125,7 +125,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }) => {
     const res = await api.acceptInvitation(payload);
     setUser(res.user);
-    setIsAuthModalOpen(false);
+    return res.user;
   };
 
   const bootstrapAdmin = async (payload: {
@@ -136,7 +136,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }) => {
     const res = await api.bootstrapAdmin(payload);
     setUser(res.user);
-    setIsAuthModalOpen(false);
+    return res.user;
   };
 
   const logout = async () => {

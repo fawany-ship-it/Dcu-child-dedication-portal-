@@ -147,7 +147,17 @@ export function Navbar({
             </a>
 
             {user ? (
-              <div className="flex items-center space-x-2 bg-black/40 border border-[#d4af37]/40 px-3 py-1.5 rounded-xl shadow-md">
+              <div 
+                onClick={() => {
+                  if (user.role === 'super_admin' || user.role === 'office_admin' || user.role === 'admin') {
+                    setCurrentTab('office_compile');
+                  } else if (user.role === 'fellowship_leader') {
+                    setCurrentTab('leadership');
+                  }
+                }}
+                className="flex items-center space-x-2 bg-black/50 hover:bg-black/70 border border-[#d4af37]/60 px-3 py-1.5 rounded-xl shadow-md cursor-pointer transition-colors"
+                title="Click to open your administrative dashboard"
+              >
                 <img
                   src={user.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`}
                   alt={user.name}
@@ -172,7 +182,10 @@ export function Navbar({
                   </p>
                 </div>
                 <button
-                  onClick={logout}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    logout();
+                  }}
                   title="Sign Out"
                   className="ml-2 bg-white/10 hover:bg-red-500/20 text-gray-200 hover:text-red-300 px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer border border-white/10"
                 >
