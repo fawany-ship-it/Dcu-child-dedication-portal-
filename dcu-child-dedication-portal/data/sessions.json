@@ -271,5 +271,57 @@
     "userAgent": "curl/7.88.1",
     "requiresMfa": false,
     "mfaVerified": true
+  },
+  {
+    "token": "859041f987c47631cc4927aa9eb6d77a561ec80969c1edc30413eca5b68b8ac6",
+    "tokenHash": "f022270575419210e276faa7e3a4497ca817eaf5bdee77047d8a7b7140438115",
+    "userId": "usr-admin-1",
+    "userEmail": "fawany@gmail.com",
+    "role": "super_admin",
+    "createdAt": 1791963235664,
+    "expiresAt": 1792049635664,
+    "ip": "127.0.0.1",
+    "userAgent": "curl/7.88.1",
+    "requiresMfa": false,
+    "mfaVerified": true
+  },
+  {
+    "token": "9c2a81721dce8080ec4f029e323c1e31037773c7a71b88134fb8c4468fbe6958",
+    "tokenHash": "a84df065ae574672c991fc742a21063a687318479668b302fbcb92565c7275fc",
+    "userId": "usr-admin-1",
+    "userEmail": "fawany@gmail.com",
+    "role": "super_admin",
+    "createdAt": 1791963242256,
+    "expiresAt": 1792049642256,
+    "ip": "127.0.0.1",
+    "userAgent": "curl/7.88.1",
+    "requiresMfa": false,
+    "mfaVerified": true
+  },
+  {
+    "token": "3cb4ff5c5d8732ad51097c812d24364c48d1bc5eb4551c450d2ec6b32f76c2c6",
+    "tokenHash": "e58f3070517399376efba443fcd7fcb6f3d84338b9ddcd7c7d68006e6794c2b1",
+    "userId": "usr-admin-1",
+    "userEmail": "fawany@gmail.com",
+    "role": "super_admin",
+    "createdAt": 1791963249269,
+    "expiresAt": 1792049649269,
+    "ip": "127.0.0.1",
+    "userAgent": "curl/7.88.1",
+    "requiresMfa": false,
+    "mfaVerified": true
+  },
+  {
+    "token": "bced48c0d70984b492fd21d7bdebdf246c0b903b9b6a03b36bdbe5d96548b63b",
+    "tokenHash": "4468d9c2c7abe82f1f4474ba3007b2004672cdb8d32aacee0a92a951acdde272",
+    "userId": "usr-admin-1",
+    "userEmail": "fawany@gmail.com",
+    "role": "super_admin",
+    "createdAt": 1791967952110,
+    "expiresAt": 1792054352110,
+    "ip": "127.0.0.1",
+    "userAgent": "curl/7.88.1",
+    "requiresMfa": false,
+    "mfaVerified": true
   }
 ]

@@ -182,7 +182,10 @@ export function Navbar({
                   </p>
                 </div>
                 <button
-                  onClick={logout}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    logout();
+                  }}
                   title="Sign Out"
                   className="ml-2 bg-white/10 hover:bg-red-500/20 text-gray-200 hover:text-red-300 px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer border border-white/10"
                 >

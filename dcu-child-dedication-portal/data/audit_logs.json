@@ -1,5 +1,54 @@
 [
   {
+    "id": "audit-1791967952112-14be3b3f",
+    "timestamp": "2026-10-14T08:52:32.112Z",
+    "eventType": "AUTH_LOGIN_SUCCESS",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "super_admin",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "requiresMfa": false
+    }
+  },
+  {
+    "id": "audit-1791963249270-1fdc36ce",
+    "timestamp": "2026-10-14T07:34:09.270Z",
+    "eventType": "AUTH_GOOGLE_LOGIN_SUCCESS",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "super_admin",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1"
+  },
+  {
+    "id": "audit-1791963242256-a8f9f667",
+    "timestamp": "2026-10-14T07:34:02.256Z",
+    "eventType": "AUTH_LOGIN_SUCCESS",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "super_admin",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "requiresMfa": false
+    }
+  },
+  {
+    "id": "audit-1791963235665-534e9290",
+    "timestamp": "2026-10-14T07:33:55.665Z",
+    "eventType": "AUTH_LOGIN_SUCCESS",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "super_admin",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "requiresMfa": false
+    }
+  },
+  {
     "id": "audit-1791961817215-96699feb",
     "timestamp": "2026-10-14T07:10:17.215Z",
     "eventType": "AUTH_LOGIN_SUCCESS",

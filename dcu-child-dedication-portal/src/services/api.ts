@@ -1,16 +1,20 @@
 import { DedicationRecord, UserProfile, PastDedicationRecord, StaffInvitation, AuditLog } from '../types';
 
 const TOKEN_KEY = 'dcu_auth_session_token_v3';
+let memoryToken: string | null = null;
 
 export function getSessionToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    const stored = localStorage.getItem(TOKEN_KEY);
+    if (stored) return stored;
   } catch {
-    return null;
+    // localStorage restricted or disabled in iframe
   }
+  return memoryToken;
 }
 
 export function setSessionToken(token: string | null) {
+  memoryToken = token;
   try {
     if (token) {
       localStorage.setItem(TOKEN_KEY, token);
@@ -18,7 +22,7 @@ export function setSessionToken(token: string | null) {
       localStorage.removeItem(TOKEN_KEY);
     }
   } catch {
-    // ignore
+    // localStorage blocked
   }
 }
 
