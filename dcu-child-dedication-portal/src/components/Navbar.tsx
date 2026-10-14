@@ -135,8 +135,29 @@ export function Navbar({
 
           {/* Authentication Status / Profile */}
           <div className="flex items-center space-x-2">
+            {/* Download GitHub ZIP Link */}
+            <a
+              href="/dcu-child-dedication-portal.zip"
+              download="dcu-child-dedication-portal.zip"
+              title="Download Full Project ZIP to update GitHub"
+              className="bg-white/10 hover:bg-white/20 text-[#ffd700] border border-[#d4af37]/40 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs shrink-0"
+            >
+              <Download className="w-3.5 h-3.5 text-[#ffd700]" />
+              <span className="hidden sm:inline">GitHub ZIP</span>
+            </a>
+
             {user ? (
-              <div className="flex items-center space-x-2 bg-black/40 border border-[#d4af37]/40 px-3 py-1.5 rounded-xl shadow-md">
+              <div 
+                onClick={() => {
+                  if (user.role === 'super_admin' || user.role === 'office_admin' || user.role === 'admin') {
+                    setCurrentTab('office_compile');
+                  } else if (user.role === 'fellowship_leader') {
+                    setCurrentTab('leadership');
+                  }
+                }}
+                className="flex items-center space-x-2 bg-black/50 hover:bg-black/70 border border-[#d4af37]/60 px-3 py-1.5 rounded-xl shadow-md cursor-pointer transition-colors"
+                title="Click to open your administrative dashboard"
+              >
                 <img
                   src={user.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`}
                   alt={user.name}

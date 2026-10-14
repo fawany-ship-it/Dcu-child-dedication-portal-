@@ -33,6 +33,12 @@ interface AuthContextType {
     name?: string;
     phone?: string;
   }) => Promise<void>;
+  bootstrapAdmin: (payload: {
+    bootstrapSecret: string;
+    email: string;
+    password: string;
+    name?: string;
+  }) => Promise<void>;
   refreshUser: () => Promise<void>;
   logout: () => Promise<void>;
   isAuthModalOpen: boolean;
@@ -122,6 +128,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsAuthModalOpen(false);
   };
 
+  const bootstrapAdmin = async (payload: {
+    bootstrapSecret: string;
+    email: string;
+    password: string;
+    name?: string;
+  }) => {
+    const res = await api.bootstrapAdmin(payload);
+    setUser(res.user);
+    setIsAuthModalOpen(false);
+  };
+
   const logout = async () => {
     await api.logout();
     setUser(null);
@@ -156,6 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createAccount,
         loginWithGoogle,
         acceptInvitation,
+        bootstrapAdmin,
         refreshUser,
         logout,
         isAuthModalOpen,

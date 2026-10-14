@@ -860,9 +860,19 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                 type="button"
                 onClick={fetchAuditLogs}
                 className="p-2 border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-600 cursor-pointer"
+                title="Refresh audit logs"
               >
                 <RefreshCw className="w-4 h-4" />
               </button>
+              <a
+                href="/dcu-child-dedication-portal.zip"
+                download="dcu-child-dedication-portal.zip"
+                title="Download Complete Repository ZIP to update GitHub"
+                className="py-2 px-3 bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] border border-[#d4af37] rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs whitespace-nowrap"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download GitHub ZIP</span>
+              </a>
             </div>
           </div>
 
