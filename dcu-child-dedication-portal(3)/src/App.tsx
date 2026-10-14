@@ -21,7 +21,16 @@ import { api } from './services/api';
 import { Phone, Mail, MapPin, Shield, Download } from 'lucide-react';
 
 function MainApp() {
-  const { user, isPastorOrLeader, openAuthModal } = useAuth();
+  const { 
+    user, 
+    isSuperAdmin, 
+    isOfficeAdmin, 
+    isPastor, 
+    isFellowshipLeader, 
+    isPastorOrLeader, 
+    isStaff, 
+    openAuthModal 
+  } = useAuth();
 
   // Tabs order:
   // 1. About DCU
@@ -56,7 +65,7 @@ function MainApp() {
       }
     }
     loadData();
-  }, []);
+  }, [user]);
 
   const handleCreateDedication = (newRecord: DedicationRecord) => {
     setDedications((prev) => [newRecord, ...prev]);
@@ -133,8 +142,24 @@ function MainApp() {
   const pendingOfficeCount = dedications.filter((d) => d.leadershipConfirmed && !d.officeApproved).length;
 
   // Check user authorization levels
-  const isStaffAuthenticated = user && user.role !== 'parent';
-  const isOfficeAdmin = user && (user.role === 'admin' || user.role === 'pastor');
+  const isStaffAuthenticated = isStaff;
+  const isOfficeAdminAuthorized = isOfficeAdmin || isPastor;
+
+  // Automatically switch tab when administrative staff sign in
+  useEffect(() => {
+    if (user) {
+      const normalizedRole = user.role === 'admin' ? 'super_admin' : user.role;
+      if (normalizedRole === 'super_admin' || normalizedRole === 'office_admin' || normalizedRole === 'pastor') {
+        if (currentTab === 'about' || currentTab === 'home') {
+          setCurrentTab('office_compile');
+        }
+      } else if (normalizedRole === 'fellowship_leader') {
+        if (currentTab === 'about' || currentTab === 'home') {
+          setCurrentTab('leadership');
+        }
+      }
+    }
+  }, [user]);
 
   const navigateToTrackerWithId = (refName: string) => {
     setTrackerQuery(refName);
@@ -189,7 +214,7 @@ function MainApp() {
 
         {/* Tab 5: Office Compile (Church admins confirm & compile) */}
         {currentTab === 'office_compile' && (
-          isOfficeAdmin ? (
+          isOfficeAdminAuthorized ? (
             <OfficeCompile
               dedications={dedications}
               onUpdateDedication={handleUpdateDedication}
@@ -218,7 +243,7 @@ function MainApp() {
 
         {/* Tab 7: Data lists (Active candidate lists) */}
         {currentTab === 'data_lists' && (
-          isOfficeAdmin ? (
+          isOfficeAdminAuthorized ? (
             <DataLists
               dedications={dedications}
               onUpdateDedication={handleUpdateDedication}
@@ -240,7 +265,7 @@ function MainApp() {
 
         {/* Tab 8: Past data list (Archived dedicated children since 2009) */}
         {currentTab === 'past_data' && (
-          isOfficeAdmin ? (
+          isOfficeAdminAuthorized ? (
             <PastDataList
               pastDedications={pastDedications}
               onAddPastDedication={handleAddPastDedication}

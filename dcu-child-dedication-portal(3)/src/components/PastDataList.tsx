@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { PastDedicationRecord, DedicationRecord } from '../types';
 import { ZONES } from '../data/zones';
+import { api } from '../services/api';
 import { 
   Download, Upload, Search, Award, CheckCircle2, Calendar, Phone, 
   MapPin, Printer, BookOpen, Plus, Filter, Database, FileSpreadsheet,
@@ -177,6 +178,7 @@ export function PastDataList({
       workbook,
       `DCU_Past_Dedications_Archive_2009_to_${new Date().getFullYear()}.xlsx`
     );
+    api.logExport('past_dedications_archive_excel', exportData.length);
   };
 
   // Download Sample Template for Past Records
