@@ -310,5 +310,31 @@
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0) Gecko/20100101 Firefox/157.0",
     "requiresMfa": false,
     "mfaVerified": true
+  },
+  {
+    "token": "be4f645305db883c6b1cbf30c001f2687fcc7139d40f441ce1814d71c60f7d07",
+    "tokenHash": "169b771ad548c0a0ce7f2fdcc8620d47d88edf6d66d743d9f5d3dd1731165c50",
+    "userId": "usr-admin-1",
+    "userEmail": "fawany@gmail.com",
+    "role": "super_admin",
+    "createdAt": 1791975512485,
+    "expiresAt": 1792061912485,
+    "ip": "127.0.0.1",
+    "userAgent": "curl/7.88.1",
+    "requiresMfa": false,
+    "mfaVerified": true
+  },
+  {
+    "token": "34cf5bc1dc2e89ade3506d05eae59ceeb5d585be812c126d661017aac81acd4c",
+    "tokenHash": "423468d730ede1a0f500b223ff4a39c99193e2818cefb601f27adaba1601cf78",
+    "userId": "usr-admin-1",
+    "userEmail": "fawany@gmail.com",
+    "role": "super_admin",
+    "createdAt": 1791975516183,
+    "expiresAt": 1792061916183,
+    "ip": "127.0.0.1",
+    "userAgent": "curl/7.88.1",
+    "requiresMfa": false,
+    "mfaVerified": true
   }
 ]

@@ -1,5 +1,28 @@
 [
   {
+    "id": "audit-1791975516184-1e9ad8be",
+    "timestamp": "2026-10-14T10:58:36.184Z",
+    "eventType": "AUTH_GOOGLE_LOGIN_SUCCESS",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "super_admin",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1"
+  },
+  {
+    "id": "audit-1791975512486-b16e6fc7",
+    "timestamp": "2026-10-14T10:58:32.486Z",
+    "eventType": "AUTH_LOGIN_SUCCESS",
+    "actorId": "usr-admin-1",
+    "actorEmail": "fawany@gmail.com",
+    "actorRole": "super_admin",
+    "outcome": "SUCCESS",
+    "ip": "127.0.0.1",
+    "details": {
+      "requiresMfa": false
+    }
+  },
+  {
     "id": "audit-1791975187524-dc081ef7",
     "timestamp": "2026-10-14T10:53:07.524Z",
     "eventType": "AUTH_LOGIN_SUCCESS",

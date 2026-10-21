@@ -864,14 +864,21 @@ export const api = {
       }
     }
 
-    // Local Fallback
     const all = getLocalDedications();
-    const cleanId = id.trim().toUpperCase();
+    const cleanQuery = id.trim().toLowerCase();
+    const cleanDigits = (phone || id).replace(/[^\d]/g, '');
+
     const found = all.find(d => 
-      d.id.toUpperCase() === cleanId || 
-      d.childName.toLowerCase().includes(id.toLowerCase())
+      d.id.toLowerCase() === cleanQuery || 
+      (d.certificateNumber && d.certificateNumber.toLowerCase() === cleanQuery) ||
+      d.childName.toLowerCase().includes(cleanQuery) ||
+      (cleanDigits.length >= 7 && (
+        (d.fatherPhone || '').replace(/[^\d]/g, '').includes(cleanDigits) ||
+        (d.motherPhone || '').replace(/[^\d]/g, '').includes(cleanDigits) ||
+        (d.parentPhone || '').replace(/[^\d]/g, '').includes(cleanDigits)
+      ))
     );
-    if (!found) throw new Error('Dedication record not found.');
+    if (!found) throw new Error('Dedication record not found. Please verify your Reference ID, Child Name, or Phone Number.');
     return found;
   },
 
@@ -1074,13 +1081,14 @@ export const api = {
     return newRecord;
   },
 
-  async bulkImportPastDedications(records: any[]): Promise<{ success: boolean; count: number }> {
+  async bulkImportPastDedications(records: any[], options?: { replaceYear?: number; replaceAll?: boolean }): Promise<{ success: boolean; count: number }> {
     if (!isStaticHostingMode) {
       try {
+        const payload = options ? { records, replaceYear: options.replaceYear, replaceAll: options.replaceAll } : records;
         const res = await fetch('/api/past-dedications/bulk-import', {
           method: 'POST',
           headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify(records)
+          body: JSON.stringify(payload)
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
@@ -1099,8 +1107,14 @@ export const api = {
     }
 
     // Local Fallback
-    const all = getLocalPastDedications();
-    all.unshift(...records);
+    let all = getLocalPastDedications();
+    if (options?.replaceAll) {
+      all = records;
+    } else if (options?.replaceYear) {
+      all = [...records, ...all.filter(d => d.dedicationYear !== options.replaceYear)];
+    } else {
+      all.unshift(...records);
+    }
     saveLocalPastDedications(all);
     return { success: true, count: records.length };
   },

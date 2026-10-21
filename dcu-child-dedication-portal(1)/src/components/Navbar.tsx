@@ -30,9 +30,10 @@ export function Navbar({
   };
 
   const navTabs = [
-    { id: 'about', label: 'About DCU', restricted: false },
     { id: 'home', label: 'Home', restricted: false },
+    { id: 'about', label: 'About DCU', restricted: false },
     { id: 'register', label: 'Register Your Child', restricted: false },
+    { id: 'track', label: 'Track Status', restricted: false },
     { 
       id: 'leadership', 
       label: 'Leadership', 
@@ -45,7 +46,6 @@ export function Navbar({
       restricted: isTabLocked('office_compile'), 
       badge: isOfficeAdmin && pendingOfficeCount > 0 ? pendingOfficeCount : undefined 
     },
-    { id: 'track', label: 'Track Status', restricted: false },
     { id: 'data_lists', label: 'Data Lists', restricted: isTabLocked('data_lists') },
     { id: 'past_data', label: 'Past Data List', restricted: isTabLocked('past_data') }
   ];
@@ -197,9 +197,10 @@ export function Navbar({
               <button
                 onClick={openAuthModal}
                 className="bg-[#d4af37] hover:bg-[#e6c154] text-[#2a170e] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 shadow-md transition-all cursor-pointer whitespace-nowrap"
+                title="Church Fellowship Leaders and Office Staff Portal Sign In"
               >
                 <UserCheck className="w-4 h-4 text-[#2a170e]" />
-                Log In / Staff
+                Leader / Admin Portal
               </button>
             )}
           </div>

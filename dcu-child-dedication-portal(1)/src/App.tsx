@@ -33,15 +33,15 @@ function MainApp() {
   } = useAuth();
 
   // Tabs order:
-  // 1. About DCU
-  // 2. Home
+  // 1. Home
+  // 2. About DCU
   // 3. Register your child
-  // 4. Leadership
-  // 5. Office Compile
-  // 6. Track status
+  // 4. Track status
+  // 5. Leadership
+  // 6. Office Compile
   // 7. Data lists
   // 8. Past data list
-  const [currentTab, setCurrentTab] = useState<string>('about');
+  const [currentTab, setCurrentTab] = useState<string>('home');
   const [dedications, setDedications] = useState<DedicationRecord[]>([]);
   const [pastDedications, setPastDedications] = useState<PastDedicationRecord[]>([]);
   const [selectedCertificate, setSelectedCertificate] = useState<DedicationRecord | null>(null);
@@ -109,13 +109,14 @@ function MainApp() {
     }
   };
 
-  const handleBulkImportPast = async (records: any[]) => {
+  const handleBulkImportPast = async (records: any[], options?: { replaceYear?: number; replaceAll?: boolean }) => {
     try {
-      await api.bulkImportPastDedications(records);
+      await api.bulkImportPastDedications(records, options);
       const fresh = await api.getPastDedications();
       setPastDedications(fresh);
     } catch (e) {
       console.error('Failed to bulk import past records', e);
+      throw e;
     }
   };
 
@@ -178,16 +179,16 @@ function MainApp() {
 
       {/* Main Content View */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
-        {/* Tab 1: About DCU */}
-        {currentTab === 'about' && <About />}
-
-        {/* Tab 2: Home */}
+        {/* Tab 1: Home */}
         {currentTab === 'home' && (
           <Home
             onNavigate={(tab) => setCurrentTab(tab)}
             totalRecordsCount={dedications.length + pastDedications.length}
           />
         )}
+
+        {/* Tab 2: About DCU */}
+        {currentTab === 'about' && <About onNavigate={(tab) => setCurrentTab(tab)} />}
 
         {/* Tab 3: Register your child */}
         {currentTab === 'register' && (
@@ -197,7 +198,16 @@ function MainApp() {
           />
         )}
 
-        {/* Tab 4: Leadership (Fellowship leaders confirm sent forms) */}
+        {/* Tab 4: Track status (Parents) */}
+        {currentTab === 'track' && (
+          <StatusTracker
+            dedications={dedications}
+            initialSearchQuery={trackerQuery}
+            onOpenCertificate={(record) => setSelectedCertificate(record)}
+          />
+        )}
+
+        {/* Tab 5: Leadership (Fellowship leaders confirm sent forms) */}
         {currentTab === 'leadership' && (
           isStaffAuthenticated ? (
             <LeadershipPortal
@@ -207,12 +217,12 @@ function MainApp() {
           ) : (
             <AccessDeniedGate
               tabTitle="Fellowship Leadership Portal"
-              tabDescription="Home Fellowship Leaders must sign in with Google to review and confirm child dedication forms sent by parents for their respective fellowship zones (Zones A to E)."
+              tabDescription="Home Fellowship Leaders must sign in to review and confirm child dedication forms sent by parents for their respective fellowship zones (Zones A to E)."
             />
           )
         )}
 
-        {/* Tab 5: Office Compile (Church admins confirm & compile) */}
+        {/* Tab 6: Office Compile (Church admins confirm & compile) */}
         {currentTab === 'office_compile' && (
           isOfficeAdminAuthorized ? (
             <OfficeCompile
@@ -226,19 +236,10 @@ function MainApp() {
               tabDescription={
                 user?.role === 'fellowship_leader'
                   ? 'Fellowship Zone Leaders do not have access to Church Office Administration. Your task is completed once you confirm forms in the Leadership Portal for your zone. The Church Office verifies and compiles the candidate lists.'
-                  : 'Church Office Administrators must sign in with Google to verify fellowship approvals and compile official candidate lists for the Dedication Sunday.'
+                  : 'Church Office Administrators must sign in to verify fellowship approvals and compile official candidate lists for the Dedication Sunday.'
               }
             />
           )
-        )}
-
-        {/* Tab 6: Track status (Parents) */}
-        {currentTab === 'track' && (
-          <StatusTracker
-            dedications={dedications}
-            initialSearchQuery={trackerQuery}
-            onOpenCertificate={(record) => setSelectedCertificate(record)}
-          />
         )}
 
         {/* Tab 7: Data lists (Active candidate lists) */}

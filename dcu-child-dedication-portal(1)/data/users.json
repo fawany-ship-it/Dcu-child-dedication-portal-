@@ -9,7 +9,7 @@
     "authProvider": "google",
     "phone": "0723 102273",
     "createdAt": "2026-01-01T00:00:00.000Z",
-    "lastLoginAt": "2026-10-14T10:53:07.521Z",
+    "lastLoginAt": "2026-10-14T10:58:36.183Z",
     "passwordHash": "2233ebd024c4609ca105e95b2ec1e2ec34099604d8d99cf390c95d61f41b21b14a02e97068e6fd16cfbb9ab15db956e3e9b043eb8ba2de3ead92bfb7da95dcd4",
     "salt": "70ffb8acd0385d35180746937db47a7c",
     "isSuspended": false

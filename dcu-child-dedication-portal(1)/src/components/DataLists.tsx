@@ -107,25 +107,32 @@ export function DataLists({
           return;
         }
 
-        const mapped = rawJson.map((row) => ({
-          childName: row['Child Full Name'] || row.childName || 'Child',
-          childDob: row['Date of Birth'] || row.childDob || '2026-01-01',
-          childGender: row['Gender'] || row.childGender || 'Male',
-          childCountyOfBirth: row['County of Birth'] || row.childCountyOfBirth || 'Nairobi',
-          fatherName: row['Father Name'] || row.fatherName || '',
-          fatherPhone: row['Father Phone'] || row.fatherPhone || '',
-          fatherEmail: row['Father Email'] || row.fatherEmail || '',
-          motherName: row['Mother Name'] || row.motherName || '',
-          motherPhone: row['Mother Phone'] || row.motherPhone || '',
-          motherEmail: row['Mother Email'] || row.motherEmail || '',
-          selectedZone: row['Fellowship Zone'] || row.selectedZone || 'Zone A',
-          selectedFellowship: row['Fellowship Name'] || row.selectedFellowship || 'Doxa',
-          residentialLocation: row['Residential Area'] || row.residentialLocation || 'Utawala',
-          serviceDate: row['Dedication Sunday'] || row.serviceDate || '2026-10-25',
-          status: row['Status'] || 'compiled',
-          leadershipConfirmed: true,
-          officeApproved: true
-        }));
+        const mapped = rawJson.map((row) => {
+          const rawDate = row['Dedication Sunday'] || row['Dedication Date'] || row['Date Dedicated'] || row['Dedicated Date'] || row['Date'] || row.serviceDate || '';
+          const father = (row['Father Name'] || row['Father'] || row.fatherName || '').toString().trim();
+          const mother = (row['Mother Name'] || row['Mother'] || row.motherName || '').toString().trim();
+          const parents = (row['Parents'] || row['Parent Name'] || '').toString().trim();
+          return {
+            childName: row['Child Full Name'] || row['Child Name'] || row['Name'] || row.childName || 'Child',
+            childDob: row['Date of Birth'] || row['DOB'] || row.childDob || '',
+            childGender: (row['Gender'] || row['Sex'] || row.childGender || 'Male').toString().toLowerCase().includes('f') ? 'Female' : 'Male',
+            childCountyOfBirth: row['County of Birth'] || row['County'] || row.childCountyOfBirth || 'Nairobi',
+            fatherName: father,
+            fatherPhone: (row['Father Phone'] || row['Phone'] || row.fatherPhone || '').toString().trim(),
+            fatherEmail: (row['Father Email'] || row.fatherEmail || '').toString().trim(),
+            motherName: mother,
+            motherPhone: (row['Mother Phone'] || row.motherPhone || '').toString().trim(),
+            motherEmail: (row['Mother Email'] || row.motherEmail || '').toString().trim(),
+            parentName: parents || (father && mother ? `${father} & ${mother}` : father || mother || ''),
+            selectedZone: row['Fellowship Zone'] || row['Zone'] || row.selectedZone || 'Zone A',
+            selectedFellowship: row['Fellowship Name'] || row['Fellowship'] || row['Cell'] || row.selectedFellowship || 'Deliverance Church Utawala',
+            residentialLocation: row['Residential Area'] || row['Residence'] || row['Estate'] || row.residentialLocation || 'Utawala',
+            serviceDate: rawDate ? String(rawDate).trim() : '2026-10-25',
+            status: row['Status'] || 'compiled',
+            leadershipConfirmed: true,
+            officeApproved: true
+          };
+        });
 
         await onBulkImport(mapped);
         alert(`Successfully imported ${mapped.length} records! Existing records are preserved.`);
