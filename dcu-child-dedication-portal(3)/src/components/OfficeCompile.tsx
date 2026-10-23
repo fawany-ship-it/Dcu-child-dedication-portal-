@@ -298,18 +298,8 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
             </p>
           </div>
 
-          {/* Action Buttons: GitHub ZIP & Staff Invite */}
+          {/* Action Buttons: Staff Invite */}
           <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
-            <a
-              href="/dcu-child-dedication-portal.zip"
-              download="dcu-child-dedication-portal.zip"
-              className="bg-white/10 hover:bg-white/20 text-[#ffd700] border border-[#d4af37]/60 font-bold px-3.5 py-2.5 rounded-xl text-xs sm:text-sm shadow-md flex items-center gap-2 cursor-pointer whitespace-nowrap transition-all"
-              title="Download full project ZIP archive to commit and push to GitHub repository"
-            >
-              <Download className="w-4 h-4 text-[#ffd700]" />
-              Download GitHub ZIP
-            </a>
-
             {isSuperAdmin && (
               <button
                 onClick={() => {
@@ -387,11 +377,11 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
             }`}
           >
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase text-blue-300">Staff Accounts</span>
+              <span className="text-[11px] font-bold uppercase text-blue-300">Staff & Leaders</span>
               <Users className="w-4 h-4 text-blue-300" />
             </div>
             <p className="text-2xl font-cinzel font-bold text-white mt-1">{usersList.length}</p>
-            <p className="text-[10px] text-gray-300">RBAC Directory</p>
+            <p className="text-[10px] text-gray-300">Track Login Activity</p>
           </button>
 
           {isSuperAdmin && (
@@ -694,8 +684,32 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                           </span>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 text-xs text-gray-500">
-                        {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : 'Never'}
+                      <td className="py-3.5 px-4">
+                        {u.lastLoginAt ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1.5 text-emerald-800 font-bold text-[11px] bg-emerald-100/80 px-2 py-0.5 rounded-md border border-emerald-300">
+                              <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
+                              Logged On
+                            </span>
+                            <p className="text-[11px] text-gray-600 font-medium">
+                              {new Date(u.lastLoginAt).toLocaleString('en-KE', {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1 text-amber-800 font-bold text-[11px] bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-300">
+                              <Clock className="w-3 h-3 text-amber-600" />
+                              Never Logged On
+                            </span>
+                            <p className="text-[10px] text-gray-500 italic">Pending First Sign-In</p>
+                          </div>
+                        )}
                       </td>
                       {isSuperAdmin && (
                         <td className="py-3.5 px-4 text-right whitespace-nowrap">
@@ -793,13 +807,19 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                         </td>
                         <td className="py-3.5 px-4">
                           {inv.status === 'accepted' ? (
-                            <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">Accepted</span>
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-md border border-emerald-300">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                              Accepted & Logged On
+                            </span>
                           ) : inv.status === 'revoked' ? (
-                            <span className="text-[11px] font-bold text-red-800 bg-red-100 px-2 py-0.5 rounded-md">Revoked</span>
+                            <span className="text-[11px] font-bold text-red-800 bg-red-100 px-2.5 py-1 rounded-md">Revoked</span>
                           ) : inv.status === 'expired' ? (
-                            <span className="text-[11px] font-bold text-gray-600 bg-gray-100 px-2 py-0.5 rounded-md">Expired</span>
+                            <span className="text-[11px] font-bold text-gray-600 bg-gray-100 px-2.5 py-1 rounded-md">Expired</span>
                           ) : (
-                            <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">Pending</span>
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-md border border-amber-300">
+                              <Clock className="w-3 h-3 text-amber-600" />
+                              Pending (Not Yet Logged On)
+                            </span>
                           )}
                         </td>
                         <td className="py-3.5 px-4 text-right">
@@ -864,15 +884,6 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
               >
                 <RefreshCw className="w-4 h-4" />
               </button>
-              <a
-                href="/dcu-child-dedication-portal.zip"
-                download="dcu-child-dedication-portal.zip"
-                title="Download Complete Repository ZIP to update GitHub"
-                className="py-2 px-3 bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] border border-[#d4af37] rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs whitespace-nowrap"
-              >
-                <Download className="w-4 h-4" />
-                <span>Download GitHub ZIP</span>
-              </a>
             </div>
           </div>
 

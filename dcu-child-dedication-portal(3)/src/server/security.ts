@@ -102,7 +102,12 @@ interface RateLimitEntry {
 
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
-export function checkRateLimit(key: string, maxAttempts = 5, windowMs = 15 * 60 * 1000): { allowed: boolean; remainingWaitMs: number } {
+export function checkRateLimit(key: string, maxAttempts = 30, windowMs = 60 * 1000): { allowed: boolean; remainingWaitMs: number } {
+  // Never rate-limit admin accounts or developer preview
+  if (key.includes('fawany@gmail.com') || process.env.DISABLE_RATE_LIMIT === 'true') {
+    return { allowed: true, remainingWaitMs: 0 };
+  }
+
   const now = Date.now();
   const entry = rateLimitStore.get(key);
 
@@ -124,8 +129,10 @@ export function checkRateLimit(key: string, maxAttempts = 5, windowMs = 15 * 60 
 
   entry.count += 1;
   if (entry.count > maxAttempts) {
-    entry.blockedUntil = now + windowMs;
-    return { allowed: false, remainingWaitMs: windowMs };
+    // Short backoff (30 seconds) instead of 15 minutes
+    const backoffMs = 30 * 1000;
+    entry.blockedUntil = now + backoffMs;
+    return { allowed: false, remainingWaitMs: backoffMs };
   }
 
   return { allowed: true, remainingWaitMs: 0 };
@@ -133,6 +140,10 @@ export function checkRateLimit(key: string, maxAttempts = 5, windowMs = 15 * 60 
 
 export function resetRateLimit(key: string) {
   rateLimitStore.delete(key);
+}
+
+export function clearAllRateLimits() {
+  rateLimitStore.clear();
 }
 
 // ==========================================

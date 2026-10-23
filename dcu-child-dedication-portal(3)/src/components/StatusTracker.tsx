@@ -66,15 +66,20 @@ export function StatusTracker({ dedications, initialSearchQuery = '', onOpenCert
           Track Dedication Status
         </h1>
 
+        <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-300 text-[11px] font-bold px-3 py-1 rounded-full mx-auto">
+          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Parent Self-Service Tracker • No Login Required</span>
+        </div>
+
         <p className="text-sm text-gray-600 max-w-lg mx-auto">
-          To protect children and family privacy, enter your <strong>Dedication Reference ID</strong> and registered <strong>Phone Number</strong>.
+          Track your child's progress through fellowship confirmation and church office approval anytime. Search using your <strong>Dedication Reference ID</strong>, <strong>Child's Full Name</strong>, or registered <strong>Phone Number</strong>.
         </p>
 
         {/* 24 Hour Verification Notice */}
         <div className="p-3.5 rounded-2xl bg-[#fbf5e6] border border-[#d4af37]/40 max-w-xl mx-auto text-xs text-[#5d430d] flex items-center justify-center gap-2">
           <Clock className="w-4 h-4 text-[#aa8222] shrink-0" />
           <span>
-            <strong>Privacy Note:</strong> Forms are reviewed by fellowship leaders and church administration. Status updates within 24 hours of submission.
+            <strong>Review Timeline:</strong> Registrations are reviewed by fellowship leaders and compiled by the Church Office. Updates reflect within 24 hours.
           </span>
         </div>
 
@@ -85,14 +90,14 @@ export function StatusTracker({ dedications, initialSearchQuery = '', onOpenCert
               required
               value={refId}
               onChange={(e) => setRefId(e.target.value)}
-              placeholder="Ref ID (e.g. DED-2026-001)"
-              className="p-3 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden shadow-xs font-mono font-bold"
+              placeholder="Ref ID, Child Name, or Phone"
+              className="p-3 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden shadow-xs font-medium"
             />
             <input
               type="tel"
               value={verifyPhone}
               onChange={(e) => setVerifyPhone(e.target.value)}
-              placeholder="Parent Phone (e.g. 0722...)"
+              placeholder="Parent Phone (Optional verification)"
               className="p-3 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden shadow-xs"
             />
           </div>
@@ -101,8 +106,8 @@ export function StatusTracker({ dedications, initialSearchQuery = '', onOpenCert
             disabled={loading}
             className="w-full bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] border border-[#d4af37] font-bold p-3 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
           >
-            <Search className="w-4 h-4" />
-            {loading ? 'Verifying...' : 'Check Status Securely'}
+            <Search className="w-4 h-4 text-[#ffd700]" />
+            {loading ? 'Finding Record...' : 'Track Application Status'}
           </button>
         </form>
 

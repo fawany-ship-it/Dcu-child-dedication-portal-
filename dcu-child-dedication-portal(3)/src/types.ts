@@ -139,15 +139,17 @@ export interface PastDedicationRecord {
   parentName?: string;
   parentPhone?: string;
   parentEmail?: string;
-  selectedZone: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E' | 'Unallocated';
+  selectedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E' | 'Unallocated' | string;
   selectedFellowship: string;
   dedicationYear: number;
   serviceDate: string;
+  originalDateRaw?: string;
   certificateNumber: string;
   certificateIssued: boolean;
   officiatingMinister?: string;
   notes?: string;
   archivalSource?: string;
+  rawRowData?: Record<string, any>;
   createdAt: string;
   updatedAt?: string;
 }

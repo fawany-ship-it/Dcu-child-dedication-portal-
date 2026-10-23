@@ -30,9 +30,10 @@ export function Navbar({
   };
 
   const navTabs = [
-    { id: 'about', label: 'About DCU', restricted: false },
     { id: 'home', label: 'Home', restricted: false },
+    { id: 'about', label: 'About DCU', restricted: false },
     { id: 'register', label: 'Register Your Child', restricted: false },
+    { id: 'track', label: 'Track Status', restricted: false },
     { 
       id: 'leadership', 
       label: 'Leadership', 
@@ -45,7 +46,6 @@ export function Navbar({
       restricted: isTabLocked('office_compile'), 
       badge: isOfficeAdmin && pendingOfficeCount > 0 ? pendingOfficeCount : undefined 
     },
-    { id: 'track', label: 'Track Status', restricted: false },
     { id: 'data_lists', label: 'Data Lists', restricted: isTabLocked('data_lists') },
     { id: 'past_data', label: 'Past Data List', restricted: isTabLocked('past_data') }
   ];
@@ -72,15 +72,6 @@ export function Navbar({
           <div className="flex items-center space-x-3 text-[11px] text-gray-300">
             <span>Utawala, Nairobi, Kenya</span>
             <span>Tel: 0723 102273</span>
-            <a
-              href="/dcu-child-dedication-portal.zip"
-              download="dcu-child-dedication-portal.zip"
-              className="inline-flex items-center gap-1 bg-[#ffd700]/20 hover:bg-[#ffd700]/30 text-[#ffd700] px-2 py-0.5 rounded border border-[#ffd700]/50 font-bold transition-colors cursor-pointer"
-              title="Download full project ZIP archive for GitHub / Vercel deployment"
-            >
-              <Download className="w-3 h-3 text-[#ffd700]" />
-              Download GitHub ZIP
-            </a>
           </div>
         </div>
       </div>
@@ -135,17 +126,6 @@ export function Navbar({
 
           {/* Authentication Status / Profile */}
           <div className="flex items-center space-x-2">
-            {/* Download GitHub ZIP Link */}
-            <a
-              href="/dcu-child-dedication-portal.zip"
-              download="dcu-child-dedication-portal.zip"
-              title="Download Full Project ZIP to update GitHub"
-              className="bg-white/10 hover:bg-white/20 text-[#ffd700] border border-[#d4af37]/40 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs shrink-0"
-            >
-              <Download className="w-3.5 h-3.5 text-[#ffd700]" />
-              <span className="hidden sm:inline">GitHub ZIP</span>
-            </a>
-
             {user ? (
               <div 
                 onClick={() => {
@@ -182,7 +162,10 @@ export function Navbar({
                   </p>
                 </div>
                 <button
-                  onClick={logout}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    logout();
+                  }}
                   title="Sign Out"
                   className="ml-2 bg-white/10 hover:bg-red-500/20 text-gray-200 hover:text-red-300 px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer border border-white/10"
                 >
@@ -194,9 +177,10 @@ export function Navbar({
               <button
                 onClick={openAuthModal}
                 className="bg-[#d4af37] hover:bg-[#e6c154] text-[#2a170e] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 shadow-md transition-all cursor-pointer whitespace-nowrap"
+                title="Church Fellowship Leaders and Office Staff Portal Sign In"
               >
                 <UserCheck className="w-4 h-4 text-[#2a170e]" />
-                Log In / Staff
+                Leader / Admin Portal
               </button>
             )}
           </div>
