@@ -2,7 +2,11 @@ import React from 'react';
 import { ChurchLogo } from './ChurchLogo';
 import { MapPin, Clock, Phone, Mail, Globe, Facebook, Youtube, Video, Church, ShieldCheck, HeartHandshake } from 'lucide-react';
 
-export function About() {
+interface AboutProps {
+  onNavigate?: (tab: string) => void;
+}
+
+export function About({ onNavigate }: AboutProps = {}) {
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-12">
       {/* Main Card */}
@@ -144,7 +148,7 @@ export function About() {
         </div>
 
         {/* Dedication Ministry Philosophy */}
-        <div className="bg-gradient-to-r from-[#2a170e] to-[#3a1d10] text-white p-6 sm:p-8 rounded-2xl space-y-3 border border-[#d4af37]/40">
+        <div className="bg-gradient-to-r from-[#2a170e] to-[#3a1d10] text-white p-6 sm:p-8 rounded-2xl space-y-4 border border-[#d4af37]/40">
           <h3 className="text-lg font-cinzel font-bold text-[#ffd700] flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-[#ffd700]" />
             About the Child Dedication Ministry
@@ -152,6 +156,23 @@ export function About() {
           <p className="text-xs sm:text-sm text-[#f6efe2]/90 leading-relaxed">
             The Dedication Department organizes Dedication Services in a period of 3 months (Quarterly) in conjunction with Fellowship Leaders across Zones A to E. Forms submitted by parents are approved by fellowship leaders and church administration to ensure continuous pastoral care and accurate church record-keeping.
           </p>
+
+          {onNavigate && (
+            <div className="pt-2 flex flex-wrap gap-3 items-center border-t border-white/10">
+              <button
+                onClick={() => onNavigate('register')}
+                className="bg-[#d4af37] hover:bg-[#e6c154] text-[#2a170e] font-bold px-4 py-2.5 rounded-xl text-xs sm:text-sm shadow-md transition-all cursor-pointer"
+              >
+                Register Your Child
+              </button>
+              <button
+                onClick={() => onNavigate('track')}
+                className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer"
+              >
+                Track Status (No Login Required)
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

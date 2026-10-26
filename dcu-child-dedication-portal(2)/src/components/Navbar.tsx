@@ -2,7 +2,7 @@ import React from 'react';
 import { ChurchLogo } from './ChurchLogo';
 import { 
   Users, Building2, Search, List, Archive, UserCheck, 
-  LogOut, CheckCircle2, Lock, Download 
+  LogOut, CheckCircle2, Lock, Baby, Shield
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -19,44 +19,57 @@ export function Navbar({
   pendingLeadershipCount, 
   pendingOfficeCount 
 }: NavbarProps) {
-  const { user, isOfficeAdmin, logout, openAuthModal } = useAuth();
+  const { user, isOfficeAdmin, isSuperAdmin, isPastor, logout, openAuthModal } = useAuth();
 
-  // Public: About DCU, Home, Register Your Child
-  // Gated: Leadership (Fellowship leaders), Office Compile, Data Lists, Past Data List (Church office)
-  const isTabLocked = (tabId: string) => {
-    if (tabId === 'leadership') return !user || user.role === 'parent';
-    if (tabId === 'office_compile' || tabId === 'data_lists' || tabId === 'past_data') return !isOfficeAdmin;
-    return false;
-  };
+  const isPrivilegedStaff = user && (
+    user.role === 'super_admin' || 
+    user.role === 'office_admin' || 
+    user.role === 'pastor' || 
+    (user.role as string) === 'admin'
+  );
 
-  const navTabs = [
-    { id: 'about', label: 'About DCU', restricted: false },
-    { id: 'home', label: 'Home', restricted: false },
-    { id: 'register', label: 'Register Your Child', restricted: false },
-    { 
-      id: 'leadership', 
-      label: 'Leadership', 
-      restricted: isTabLocked('leadership'), 
-      badge: user && user.role !== 'parent' && pendingLeadershipCount > 0 ? pendingLeadershipCount : undefined 
-    },
-    { 
-      id: 'office_compile', 
-      label: 'Office Compile', 
-      restricted: isTabLocked('office_compile'), 
-      badge: isOfficeAdmin && pendingOfficeCount > 0 ? pendingOfficeCount : undefined 
-    },
-    { id: 'track', label: 'Track Status', restricted: false },
-    { id: 'data_lists', label: 'Data Lists', restricted: isTabLocked('data_lists') },
-    { id: 'past_data', label: 'Past Data List', restricted: isTabLocked('past_data') }
+  const isFellowshipLeader = user && user.role === 'fellowship_leader';
+
+  // Build clean tab list based strictly on authentication & role:
+  // 1. PUBLIC TABS (Always visible to all parents & visitors)
+  const navTabs: { id: string; label: string; badge?: number; icon?: any }[] = [
+    { id: 'home', label: 'Home' },
+    { id: 'about', label: 'About DCU' },
+    { id: 'register', label: 'Register Your Child' },
+    { id: 'track', label: 'Track Status' }
   ];
+
+  // 2. FELLOWSHIP LEADER: ONLY their specific zone confirmation tab
+  // Strict rule: Fellowship leaders NEVER see Office Compile, Data Lists, or Past Data List
+  if (isFellowshipLeader) {
+    const zoneName = user.assignedZone || 'Fellowship';
+    navTabs.push({
+      id: 'leadership',
+      label: `${zoneName} Confirmations`,
+      badge: pendingLeadershipCount > 0 ? pendingLeadershipCount : undefined
+    });
+  }
+
+  // 3. CHURCH OFFICE ADMINS & PASTORS: Full oversight and compilation
+  if (isPrivilegedStaff) {
+    navTabs.push(
+      { 
+        id: 'leadership', 
+        label: 'Leadership', 
+        badge: pendingLeadershipCount > 0 ? pendingLeadershipCount : undefined 
+      },
+      { 
+        id: 'office_compile', 
+        label: 'Office Compile', 
+        badge: pendingOfficeCount > 0 ? pendingOfficeCount : undefined 
+      },
+      { id: 'data_lists', label: 'Data Lists' },
+      { id: 'past_data', label: 'Past Data List' }
+    );
+  }
 
   const handleTabClick = (tabId: string) => {
     setCurrentTab(tabId);
-    if (tabId === 'leadership' && (!user || user.role === 'parent')) {
-      openAuthModal();
-    } else if ((tabId === 'office_compile' || tabId === 'data_lists' || tabId === 'past_data') && !isOfficeAdmin) {
-      openAuthModal();
-    }
   };
 
   return (
@@ -72,15 +85,6 @@ export function Navbar({
           <div className="flex items-center space-x-3 text-[11px] text-gray-300">
             <span>Utawala, Nairobi, Kenya</span>
             <span>Tel: 0723 102273</span>
-            <a
-              href="/dcu-child-dedication-portal.zip"
-              download="dcu-child-dedication-portal.zip"
-              className="inline-flex items-center gap-1 bg-[#ffd700]/20 hover:bg-[#ffd700]/30 text-[#ffd700] px-2 py-0.5 rounded border border-[#ffd700]/50 font-bold transition-colors cursor-pointer"
-              title="Download full project ZIP archive for GitHub / Vercel deployment"
-            >
-              <Download className="w-3 h-3 text-[#ffd700]" />
-              Download GitHub ZIP
-            </a>
           </div>
         </div>
       </div>
@@ -119,8 +123,10 @@ export function Navbar({
                       : 'text-gray-200 hover:text-[#ffd700] hover:bg-white/10'
                   }`}
                 >
-                  {tab.restricted && (
-                    <Lock className={`w-3 h-3 ${isActive ? 'text-[#2a170e]' : 'text-[#d4af37]'}`} />
+                  {tab.id === 'track' && (
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 px-1.5 py-0.2 rounded-md font-normal">
+                      No Login
+                    </span>
                   )}
                   {tab.label}
                   {tab.badge && (
@@ -135,28 +141,17 @@ export function Navbar({
 
           {/* Authentication Status / Profile */}
           <div className="flex items-center space-x-2">
-            {/* Download GitHub ZIP Link */}
-            <a
-              href="/dcu-child-dedication-portal.zip"
-              download="dcu-child-dedication-portal.zip"
-              title="Download Full Project ZIP to update GitHub"
-              className="bg-white/10 hover:bg-white/20 text-[#ffd700] border border-[#d4af37]/40 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs shrink-0"
-            >
-              <Download className="w-3.5 h-3.5 text-[#ffd700]" />
-              <span className="hidden sm:inline">GitHub ZIP</span>
-            </a>
-
-            {user ? (
+            {user && user.role !== 'parent' ? (
               <div 
                 onClick={() => {
-                  if (user.role === 'super_admin' || user.role === 'office_admin' || user.role === 'admin') {
-                    setCurrentTab('office_compile');
-                  } else if (user.role === 'fellowship_leader') {
+                  if (user.role === 'fellowship_leader') {
                     setCurrentTab('leadership');
+                  } else {
+                    setCurrentTab('office_compile');
                   }
                 }}
                 className="flex items-center space-x-2 bg-black/50 hover:bg-black/70 border border-[#d4af37]/60 px-3 py-1.5 rounded-xl shadow-md cursor-pointer transition-colors"
-                title="Click to open your administrative dashboard"
+                title="Click to open your leadership dashboard"
               >
                 <img
                   src={user.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`}
@@ -176,8 +171,6 @@ export function Navbar({
                       ? 'Church Office Admin' 
                       : user.role === 'pastor' 
                       ? 'Pastor' 
-                      : user.role === 'parent'
-                      ? 'Parent'
                       : String(user.role).replace('_', ' ')}
                   </p>
                 </div>
@@ -185,6 +178,7 @@ export function Navbar({
                   onClick={(e) => {
                     e.stopPropagation();
                     logout();
+                    setCurrentTab('home');
                   }}
                   title="Sign Out"
                   className="ml-2 bg-white/10 hover:bg-red-500/20 text-gray-200 hover:text-red-300 px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer border border-white/10"
@@ -197,9 +191,10 @@ export function Navbar({
               <button
                 onClick={openAuthModal}
                 className="bg-[#d4af37] hover:bg-[#e6c154] text-[#2a170e] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 shadow-md transition-all cursor-pointer whitespace-nowrap"
+                title="Church Fellowship Leaders and Office Staff Portal Sign In"
               >
                 <UserCheck className="w-4 h-4 text-[#2a170e]" />
-                Log In / Staff
+                Leader / Admin Portal
               </button>
             )}
           </div>
@@ -220,7 +215,11 @@ export function Navbar({
                     : 'text-gray-200 hover:text-white'
                 }`}
               >
-                {tab.restricted && <Lock className="w-2.5 h-2.5 text-[#d4af37]" />}
+                {tab.id === 'track' && (
+                  <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1 rounded-sm">
+                    No Login
+                  </span>
+                )}
                 {tab.label}
                 {tab.badge && (
                   <span className="bg-amber-400 text-black text-[9px] font-bold px-1 rounded-full">

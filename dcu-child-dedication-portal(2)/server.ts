@@ -267,7 +267,8 @@ function rateLimit(maxAttempts = 30, windowMs = 60 * 1000) {
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  // AI Studio dev environment requires port 3000
+  const PORT = 3000;
 
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '10mb' }));
@@ -859,17 +860,41 @@ async function startServer() {
     }
 
     const dedications = loadDedications();
-    const record = dedications.find(d => d.id.toLowerCase() === id.toLowerCase());
+    const queryStr = id.toLowerCase();
+    const cleanDigits = (phone || id).replace(/[^\d]/g, '');
+
+    const record = dedications.find(d => {
+      // Match by Dedication ID or Certificate Number
+      if (d.id.toLowerCase() === queryStr) return true;
+      if (d.certificateNumber && d.certificateNumber.toLowerCase() === queryStr) return true;
+
+      // Match by Child Full Name (min 3 chars)
+      if (queryStr.length >= 3 && d.childName.toLowerCase().includes(queryStr)) return true;
+
+      // Match by Phone (min 7 digits)
+      if (cleanDigits.length >= 7) {
+        const fClean = (d.fatherPhone || '').replace(/[^\d]/g, '');
+        const mClean = (d.motherPhone || '').replace(/[^\d]/g, '');
+        const pClean = (d.parentPhone || '').replace(/[^\d]/g, '');
+        if (fClean.endsWith(cleanDigits) || cleanDigits.endsWith(fClean) ||
+            mClean.endsWith(cleanDigits) || cleanDigits.endsWith(mClean) ||
+            pClean.endsWith(cleanDigits) || cleanDigits.endsWith(pClean)) {
+          return true;
+        }
+      }
+      return false;
+    });
 
     if (!record) {
-      return res.status(404).json({ error: 'Record not found. Please check your reference ID.' });
+      return res.status(404).json({ error: 'Record not found. Please verify your Reference ID, Child Name, or Phone Number.' });
     }
 
-    // Phone verification check to prevent IDOR / unauthorized enumeration
-    if (phone) {
-      const matchFather = record.fatherPhone.replace(/\s+/g, '').includes(phone);
-      const matchMother = record.motherPhone.replace(/\s+/g, '').includes(phone);
-      const matchParent = record.parentPhone ? record.parentPhone.replace(/\s+/g, '').includes(phone) : false;
+    // Phone verification check (if explicit verification phone was provided and id was not a phone)
+    if (phone && phone !== id) {
+      const pDigits = phone.replace(/[^\d]/g, '');
+      const matchFather = (record.fatherPhone || '').replace(/[^\d]/g, '').includes(pDigits);
+      const matchMother = (record.motherPhone || '').replace(/[^\d]/g, '').includes(pDigits);
+      const matchParent = (record.parentPhone || '').replace(/[^\d]/g, '').includes(pDigits);
       if (!matchFather && !matchMother && !matchParent) {
         return res.status(403).json({ error: 'Verification failed: provided phone does not match record.' });
       }
@@ -1127,53 +1152,100 @@ async function startServer() {
   });
 
   app.post('/api/past-dedications/bulk-import', requireRoles(['super_admin', 'office_admin']), (req: AuthenticatedRequest, res: Response) => {
-    const items = req.body;
-    if (!Array.isArray(items)) {
-      return res.status(400).json({ error: 'Array of records expected' });
+    let items: any[] = [];
+    let replaceYear: number | undefined;
+    let replaceAll = false;
+
+    if (Array.isArray(req.body)) {
+      items = req.body;
+    } else if (req.body && Array.isArray(req.body.records)) {
+      items = req.body.records;
+      replaceYear = req.body.replaceYear ? Number(req.body.replaceYear) : undefined;
+      replaceAll = Boolean(req.body.replaceAll);
+    } else {
+      return res.status(400).json({ error: 'Array of records expected in request body' });
     }
 
     const currentPast = loadPastDedications();
     const now = new Date().toISOString();
 
     const formatted: PastDedicationRecord[] = items.map((rec, i) => {
-      const year = Number(rec.dedicationYear) || 
-        (rec.serviceDate ? parseInt(String(rec.serviceDate).slice(0, 4)) : 2009);
-      const county = rec.childCountyOfBirth || rec.childPlaceOfBirth || 'Nairobi';
-      const childName = (rec.childName || rec['Child Full Name'] || rec['Child Name'] || 'Dedicated Child').trim();
-      const father = (rec.fatherName || rec['Father Name'] || '').trim();
-      const mother = (rec.motherName || rec['Mother Name'] || '').trim();
+      // 1. Service / Dedication Date - strictly preserve original date from file
+      const rawDate = (rec.serviceDate || rec['Dedicated Date'] || rec['Dedication Date'] || rec['Date Dedicated'] || rec['Date of Dedication'] || rec['Date'] || '').toString().trim();
+      let year = Number(rec.dedicationYear);
+      if (isNaN(year) || !year) {
+        const matchedY = rawDate.match(/\b(19\d\d|20\d\d)\b/);
+        year = matchedY ? parseInt(matchedY[0], 10) : 2009;
+      }
+
+      // Preserve original date string, only falling back to year if completely empty
+      const serviceDate = rawDate || (year ? String(year) : '2009');
+
+      // 2. Names & Parents
+      const childName = (rec.childName || rec['Child Full Name'] || rec['Child Name'] || rec['Name'] || 'Dedicated Child').toString().trim();
+      const father = (rec.fatherName || rec['Father Name'] || rec['Father'] || '').toString().trim();
+      const mother = (rec.motherName || rec['Mother Name'] || rec['Mother'] || '').toString().trim();
+      const rawParent = (rec.parentName || rec['Parent Name'] || rec['Parents'] || '').toString().trim();
+      const parentName = rawParent || (father && mother ? `${father} & ${mother}` : father || mother || '');
+
+      // 3. Fellowship and Zone - never force fake "Fellowship" or "Zone A"
+      const rawFellowship = (rec.selectedFellowship || rec['Fellowship Name'] || rec['Fellowship'] || rec['Cell'] || rec['Estate'] || rec['Residence'] || '').toString().trim();
+      const cleanFellowship = (rawFellowship.toLowerCase() === 'fellowship') ? 'Deliverance Church Utawala' : (rawFellowship || 'Deliverance Church Utawala');
+      
+      const rawZone = (rec.selectedZone || rec['Fellowship Zone'] || rec['Zone'] || '').toString().trim();
+      const zone = (rawZone.toLowerCase() === 'zone a' && !rawFellowship) ? '' : rawZone;
+
+      // 4. Minister - never force Senior Pastor & Presbytery if not in file
+      const rawMinister = (rec.officiatingMinister || rec['Officiating Minister'] || rec['Minister'] || rec['Pastor'] || rec['Officiated By'] || '').toString().trim();
+
+      // 5. Certificate Number - preserve original
+      const certNo = (rec.certificateNumber || rec['Certificate No'] || rec['Cert No'] || rec['Certificate'] || '').toString().trim() ||
+        `DCU-DED-${year}-${String(currentPast.length + i + 1).padStart(3, '0')}`;
+
+      const county = (rec.childCountyOfBirth || rec.childPlaceOfBirth || rec['County of Birth'] || rec['County'] || 'Nairobi').toString().trim();
 
       return {
         id: rec.id || `HIST-${year}-${String(currentPast.length + i + 1).padStart(3, '0')}`,
         childName,
-        childDob: rec.childDob || rec['Date of Birth'] || `${year}-01-01`,
-        childGender: (rec.childGender === 'Female' || rec['Gender'] === 'Female') ? 'Female' : 'Male',
+        childDob: (rec.childDob || rec['Date of Birth'] || rec['DOB'] || '').toString().trim(),
+        childGender: (rec.childGender === 'Female' || rec['Gender'] === 'Female' || String(rec.childGender).toLowerCase().startsWith('f')) ? 'Female' : 'Male',
         childCountyOfBirth: county,
         childPlaceOfBirth: county,
         fatherName: father,
-        fatherPhone: rec.fatherPhone || rec['Father Phone'] || '',
-        fatherEmail: rec.fatherEmail || '',
+        fatherPhone: (rec.fatherPhone || rec['Father Phone'] || rec['Phone'] || '').toString().trim(),
+        fatherEmail: (rec.fatherEmail || '').toString().trim(),
         motherName: mother,
-        motherPhone: rec.motherPhone || rec['Mother Phone'] || '',
-        motherEmail: rec.motherEmail || '',
-        parentName: rec.parentName || rec['Parent Name'] || `${father} & ${mother}`.trim(),
-        parentPhone: rec.parentPhone || rec.fatherPhone || rec.motherPhone || '',
-        parentEmail: rec.parentEmail || '',
-        selectedZone: rec.selectedZone || rec['Fellowship Zone'] || 'Zone A',
-        selectedFellowship: rec.selectedFellowship || rec['Fellowship Name'] || 'Fellowship',
+        motherPhone: (rec.motherPhone || rec['Mother Phone'] || '').toString().trim(),
+        motherEmail: (rec.motherEmail || '').toString().trim(),
+        parentName,
+        parentPhone: (rec.parentPhone || rec.fatherPhone || rec.motherPhone || rec['Phone'] || '').toString().trim(),
+        parentEmail: (rec.parentEmail || '').toString().trim(),
+        selectedZone: zone || 'Unallocated',
+        selectedFellowship: cleanFellowship,
         dedicationYear: isNaN(year) ? 2009 : year,
-        serviceDate: rec.serviceDate || rec['Dedicated Date'] || `${year}-11-29`,
-        certificateNumber: rec.certificateNumber || rec['Certificate No'] || `DCU-DED-${year}-${String(currentPast.length + i + 1).padStart(3, '0')}`,
+        serviceDate,
+        originalDateRaw: rec.originalDateRaw || rawDate || serviceDate,
+        certificateNumber: certNo,
         certificateIssued: true,
-        officiatingMinister: rec.officiatingMinister || rec['Officiating Minister'] || 'Senior Pastor & Presbytery',
-        notes: rec.notes || rec['Notes'] || 'Imported historical archive from 2009+ register',
-        archivalSource: rec.archivalSource || 'Historical Church Register',
+        officiatingMinister: rawMinister || 'Deliverance Church Presbytery',
+        notes: (rec.notes || rec['Notes'] || 'Imported historical archive from church register').toString().trim(),
+        archivalSource: (rec.archivalSource || 'Historical Church Register').toString().trim(),
+        rawRowData: rec.rawRowData || undefined,
         createdAt: rec.createdAt || now,
         updatedAt: now
       };
     });
 
-    const combined = [...formatted, ...currentPast];
+    let combined: PastDedicationRecord[];
+    if (replaceAll) {
+      combined = formatted;
+    } else if (replaceYear) {
+      const remaining = currentPast.filter(d => d.dedicationYear !== replaceYear);
+      combined = [...formatted, ...remaining];
+    } else {
+      combined = [...formatted, ...currentPast];
+    }
+
     savePastDedications(combined);
 
     writeAuditLog({
@@ -1182,7 +1254,7 @@ async function startServer() {
       actorEmail: req.user!.email,
       outcome: 'SUCCESS',
       ip: req.ip,
-      details: { count: formatted.length, total: combined.length }
+      details: { count: formatted.length, total: combined.length, replaceYear, replaceAll }
     });
 
     res.json({ success: true, count: formatted.length, total: combined.length });

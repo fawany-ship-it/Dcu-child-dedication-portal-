@@ -9,7 +9,7 @@
     "authProvider": "google",
     "phone": "0723 102273",
     "createdAt": "2026-01-01T00:00:00.000Z",
-    "lastLoginAt": "2026-10-14T08:52:32.107Z",
+    "lastLoginAt": "2026-10-26T09:48:32.373Z",
     "passwordHash": "2233ebd024c4609ca105e95b2ec1e2ec34099604d8d99cf390c95d61f41b21b14a02e97068e6fd16cfbb9ab15db956e3e9b043eb8ba2de3ead92bfb7da95dcd4",
     "salt": "70ffb8acd0385d35180746937db47a7c",
     "isSuspended": false
@@ -25,7 +25,7 @@
     "authProvider": "google",
     "phone": "0722 001 002",
     "createdAt": "2026-01-10T00:00:00.000Z",
-    "lastLoginAt": "2026-10-14T07:10:07.940Z",
+    "lastLoginAt": "2026-10-26T09:48:32.490Z",
     "passwordHash": "71c660d73278026e3861d43d9991484b04b4b3f1be7e35f5fb48d293a87eeeb6987579535c9d0b7ff06dd0fb20142000ee2e52a8e01c0626bd429f1e7b3cab21",
     "salt": "617f3e86385fc2a707a5f63a5278ac58",
     "isSuspended": false
@@ -318,6 +318,49 @@
     "salt": "8f51744e92ca4f446f0a5b3f07cd285d",
     "createdAt": "2026-10-14T07:10:08.064Z",
     "lastLoginAt": "2026-10-14T07:10:08.064Z",
+    "isSuspended": true
+  },
+  {
+    "id": "usr-parent-1793008112216",
+    "email": "unauthorized.google.1793008112212@gmail.com",
+    "name": "New Google User",
+    "role": "parent",
+    "isApproved": true,
+    "authProvider": "google",
+    "avatar": "https://api.dicebear.com/7.x/initials/svg?seed=New%20Google%20User",
+    "createdAt": "2026-10-26T09:48:32.216Z",
+    "lastLoginAt": "2026-10-26T09:48:32.216Z",
+    "passwordHash": "7c70f00f11dc371a541e29df225136fe255905789736e60cdbb53f0eb22afe6f68bfa79e2b960dd816d0a0f9744834aced2e61bbfb172ce04c246f91dbb07201",
+    "salt": "457c21f0e2a8f48b2ca5413a4756ce29",
+    "isSuspended": false
+  },
+  {
+    "id": "usr-parent-1793008112432",
+    "email": "test.parent.1793008112181@example.com",
+    "name": "Faith Mwende",
+    "role": "parent",
+    "isApproved": true,
+    "authProvider": "email",
+    "phone": "0711 222 333",
+    "passwordHash": "ae395dcfd2ecb06fbf4d9268f9b13ae1f224a9c8132c6751a46033f1d8bafc3c35a43ee7d71abb13f64650e4e7f247cc2a759a95b5ceec8b6cdc304525fac405",
+    "salt": "88a8b5a53fb352e4724f3bc73c5a5352",
+    "createdAt": "2026-10-26T09:48:32.432Z",
+    "lastLoginAt": "2026-10-26T09:48:32.432Z",
+    "isSuspended": false
+  },
+  {
+    "id": "usr-staff-1793008112584",
+    "email": "staff.to.suspend.1793008112533@example.com",
+    "name": "Staff To Suspend",
+    "role": "fellowship_leader",
+    "assignedZone": "Zone C",
+    "phone": "",
+    "isApproved": true,
+    "authProvider": "email",
+    "passwordHash": "b2857de480a2ad80f7bffd3fc1a0df6f23db43252f494475939cb6ac2b1b2a3225f9bd199ac09d6301386762cf95bbb236222d4cdb6c755fa4855230948de1e6",
+    "salt": "5b081b8aebd7501d5c9579dbd454cdb2",
+    "createdAt": "2026-10-26T09:48:32.584Z",
+    "lastLoginAt": "2026-10-26T09:48:32.584Z",
     "isSuspended": true
   }
 ]

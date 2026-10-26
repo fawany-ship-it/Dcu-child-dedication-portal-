@@ -6,16 +6,155 @@ import { api } from '../services/api';
 import { 
   Download, Upload, Search, Award, CheckCircle2, Calendar, Phone, 
   MapPin, Printer, BookOpen, Plus, Filter, Database, FileSpreadsheet,
-  AlertCircle, Trash2, Edit3, X, Check, RefreshCw
+  AlertCircle, Trash2, Edit3, X, Check, RefreshCw, SlidersHorizontal,
+  ArrowRight, ShieldCheck, Sparkles, ChevronDown, ChevronUp, Layers
 } from 'lucide-react';
 
 interface PastDataListProps {
   pastDedications: PastDedicationRecord[];
   onAddPastDedication: (rec: Partial<PastDedicationRecord>) => Promise<void>;
-  onBulkImportPast: (records: any[]) => Promise<void>;
+  onBulkImportPast: (records: any[], options?: { replaceYear?: number; replaceAll?: boolean }) => Promise<void>;
   onUpdatePastDedication: (id: string, updates: Partial<PastDedicationRecord>) => Promise<void>;
   onDeletePastDedication: (id: string) => Promise<void>;
   onOpenCertificate: (record: DedicationRecord) => void;
+}
+
+// -------------------------------------------------------------
+// Helper: Robust Historical Date Parser
+// Strictly preserves original dates from old church files
+// Supports Excel serials, Kenyan/UK DD/MM/YYYY, ISO, textual dates
+// -------------------------------------------------------------
+export function parseHistoricalDate(raw: any, fallbackYear = 2009): { dateStr: string; year: number; rawOriginal: string } {
+  if (raw === null || raw === undefined || raw === '') {
+    return { dateStr: `${fallbackYear}`, year: fallbackYear, rawOriginal: '' };
+  }
+
+  const rawOriginal = String(raw).trim();
+
+  // If already number (Excel serial date)
+  if (typeof raw === 'number') {
+    if (raw > 20000 && raw < 70000) {
+      try {
+        const utc_days = Math.floor(raw - 25569);
+        const date_info = new Date(utc_days * 86400 * 1000);
+        const y = date_info.getUTCFullYear();
+        const m = String(date_info.getUTCMonth() + 1).padStart(2, '0');
+        const d = String(date_info.getUTCDate()).padStart(2, '0');
+        return { dateStr: `${y}-${m}-${d}`, year: y, rawOriginal };
+      } catch {
+        // pass
+      }
+    } else if (raw >= 1990 && raw <= 2050) {
+      return { dateStr: `${raw}`, year: raw, rawOriginal };
+    }
+  }
+
+  let str = rawOriginal;
+
+  // Check if string is a 5-digit Excel serial code like "40146"
+  if (/^\d{5}$/.test(str)) {
+    const num = parseInt(str, 10);
+    if (num > 20000 && num < 70000) {
+      const utc_days = Math.floor(num - 25569);
+      const date_info = new Date(utc_days * 86400 * 1000);
+      const y = date_info.getUTCFullYear();
+      const m = String(date_info.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(date_info.getUTCDate()).padStart(2, '0');
+      return { dateStr: `${y}-${m}-${d}`, year: y, rawOriginal };
+    }
+  }
+
+  // 1. ISO format: YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (isoMatch) {
+    const y = parseInt(isoMatch[1], 10);
+    const m = isoMatch[2].padStart(2, '0');
+    const d = isoMatch[3].padStart(2, '0');
+    return { dateStr: `${y}-${m}-${d}`, year: y, rawOriginal };
+  }
+
+  // 2. Day-Month-Year format (DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY) - Standard in Kenya
+  const dmyMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+  if (dmyMatch) {
+    const d = dmyMatch[1].padStart(2, '0');
+    const m = dmyMatch[2].padStart(2, '0');
+    const y = parseInt(dmyMatch[3], 10);
+    const numD = parseInt(d, 10);
+    const numM = parseInt(m, 10);
+    if (numM <= 12 && numD <= 31) {
+      return { dateStr: `${y}-${m}-${d}`, year: y, rawOriginal };
+    } else if (numD <= 12 && numM <= 31) {
+      // Swapped US format: MM/DD/YYYY
+      return { dateStr: `${y}-${d}-${m}`, year: y, rawOriginal };
+    }
+  }
+
+  // 3. Textual dates: "29th November 2009", "29 Nov 2009", "Nov 29, 2009"
+  const months: Record<string, string> = {
+    jan: '01', january: '01',
+    feb: '02', february: '02',
+    mar: '03', march: '03',
+    apr: '04', april: '04',
+    may: '05',
+    jun: '06', june: '06',
+    jul: '07', july: '07',
+    aug: '08', august: '08',
+    sep: '09', sept: '09', september: '09',
+    oct: '10', october: '10',
+    nov: '11', november: '11',
+    dec: '12', december: '12'
+  };
+
+  const textMatch1 = str.match(/(\d{1,2})(?:st|nd|rd|th)?[\s\-_]+([A-Za-z]+)[\s\-_]+(\d{4})/i);
+  if (textMatch1) {
+    const d = textMatch1[1].padStart(2, '0');
+    const monName = textMatch1[2].toLowerCase();
+    const y = parseInt(textMatch1[3], 10);
+    const m = months[monName] || months[monName.slice(0, 3)];
+    if (m) {
+      return { dateStr: `${y}-${m}-${d}`, year: y, rawOriginal };
+    }
+  }
+
+  const textMatch2 = str.match(/([A-Za-z]+)[\s\-_]+(\d{1,2})(?:st|nd|rd|th)?[\s\-_,]+(\d{4})/i);
+  if (textMatch2) {
+    const monName = textMatch2[1].toLowerCase();
+    const d = textMatch2[2].padStart(2, '0');
+    const y = parseInt(textMatch2[3], 10);
+    const m = months[monName] || months[monName.slice(0, 3)];
+    if (m) {
+      return { dateStr: `${y}-${m}-${d}`, year: y, rawOriginal };
+    }
+  }
+
+  // 4. Year detection fallback
+  const yearMatch = str.match(/\b(19\d\d|20\d\d)\b/);
+  const foundYear = yearMatch ? parseInt(yearMatch[0], 10) : fallbackYear;
+
+  // Preserve the original text verbatim rather than replacing it with an invented date
+  return { dateStr: str, year: foundYear, rawOriginal };
+}
+
+// -------------------------------------------------------------
+// Helper: Clean Display for Fellowship & Zone
+// Avoids ugly forced placeholders like "Fellowship (Zone A)"
+// -------------------------------------------------------------
+function formatFellowshipDisplay(fellowship?: string, zone?: string): string {
+  const cleanF = (fellowship || '').trim();
+  const cleanZ = (zone || '').trim();
+  const isGenericF = !cleanF || cleanF.toLowerCase() === 'fellowship';
+  const isGenericZ = !cleanZ || cleanZ.toLowerCase() === 'zone a' || cleanZ.toLowerCase() === 'unallocated';
+
+  if (cleanF && !isGenericF && cleanZ && !isGenericZ && cleanF.toLowerCase() !== cleanZ.toLowerCase()) {
+    return `${cleanF} (${cleanZ})`;
+  }
+  if (cleanF && !isGenericF) {
+    return cleanF;
+  }
+  if (cleanZ && !isGenericZ) {
+    return cleanZ;
+  }
+  return 'Deliverance Church Utawala';
 }
 
 export function PastDataList({
@@ -36,7 +175,14 @@ export function PastDataList({
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingRecord, setEditingRecord] = useState<PastDedicationRecord | null>(null);
 
-  // Import modal state
+  // Raw file & interactive mapping state
+  const [rawFileRows, setRawFileRows] = useState<any[]>([]);
+  const [fileColumns, setFileColumns] = useState<string[]>([]);
+  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
+  const [showMapperConfig, setShowMapperConfig] = useState(false);
+  const [importMode, setImportMode] = useState<'append' | 'replace_2009' | 'replace_all'>('append');
+
+  // Preview & progress state
   const [importedPreview, setImportedPreview] = useState<any[]>([]);
   const [importFileName, setImportFileName] = useState('');
   const [isImporting, setIsImporting] = useState(false);
@@ -53,19 +199,18 @@ export function PastDataList({
     fatherPhone: '',
     motherName: '',
     motherPhone: '',
-    selectedZone: 'Zone A',
-    selectedFellowship: 'Doxa',
+    selectedZone: '',
+    selectedFellowship: 'Deliverance Church Utawala',
     dedicationYear: 2009,
-    serviceDate: '2009-08-30',
+    serviceDate: '2009',
     certificateNumber: '',
-    officiatingMinister: 'Senior Pastor & Presbytery',
+    officiatingMinister: '',
     notes: 'Historical church register entry'
   });
 
   // Calculate unique years available in dataset (sorted descending)
   const availableYears = useMemo(() => {
     const yearsSet = new Set<number>();
-    // Always include historic years starting from 2009
     for (let y = 2009; y <= new Date().getFullYear(); y++) {
       yearsSet.add(y);
     }
@@ -107,6 +252,8 @@ export function PastDataList({
         (d.parentName && d.parentName.toLowerCase().includes(q)) ||
         (d.certificateNumber && d.certificateNumber.toLowerCase().includes(q)) ||
         (d.selectedFellowship && d.selectedFellowship.toLowerCase().includes(q)) ||
+        (d.officiatingMinister && d.officiatingMinister.toLowerCase().includes(q)) ||
+        (d.serviceDate && d.serviceDate.toLowerCase().includes(q)) ||
         (d.notes && d.notes.toLowerCase().includes(q));
 
       return matchesYear && matchesZone && matchesGender && matchesSearch;
@@ -118,7 +265,7 @@ export function PastDataList({
     const certRecord: DedicationRecord = {
       id: past.id,
       childName: past.childName,
-      childDob: past.childDob,
+      childDob: past.childDob || `${past.dedicationYear || 2009}`,
       childGender: past.childGender,
       childCountyOfBirth: past.childCountyOfBirth || past.childPlaceOfBirth || 'Nairobi',
       childPlaceOfBirth: past.childCountyOfBirth || past.childPlaceOfBirth || 'Nairobi',
@@ -132,8 +279,8 @@ export function PastDataList({
       parentPhone: past.parentPhone || past.fatherPhone || past.motherPhone || '',
       parentEmail: past.parentEmail || '',
       isInFellowship: true,
-      selectedZone: past.selectedZone,
-      selectedFellowship: past.selectedFellowship,
+      selectedZone: (past.selectedZone as any) || 'Unallocated',
+      selectedFellowship: past.selectedFellowship || 'Deliverance Church Utawala',
       dataConsent: true,
       status: 'completed',
       serviceDate: past.serviceDate,
@@ -159,14 +306,14 @@ export function PastDataList({
       'Dedicated Date': d.serviceDate,
       'Date of Birth': d.childDob,
       'Gender': d.childGender,
-      'County of Birth': d.childCountyOfBirth || d.childPlaceOfBirth,
+      'County of Birth': d.childCountyOfBirth || d.childPlaceOfBirth || 'Nairobi',
       'Father Name': d.fatherName,
       'Father Phone': d.fatherPhone || '',
       'Mother Name': d.motherName,
       'Mother Phone': d.motherPhone || '',
-      'Fellowship Zone': d.selectedZone,
+      'Fellowship Zone': d.selectedZone || '',
       'Fellowship Name': d.selectedFellowship,
-      'Officiating Minister': d.officiatingMinister || 'Senior Pastor & Presbytery',
+      'Officiating Minister': d.officiatingMinister || '',
       'Notes': d.notes || '',
       'Archival Source': d.archivalSource || 'Church Dedication Register'
     }));
@@ -198,7 +345,7 @@ export function PastDataList({
         'Dedication Year': 2009,
         'Dedicated Date': '2009-08-30',
         'Certificate No': 'DCU-DED-2009-001',
-        'Officiating Minister': 'Senior Pastor & Presbytery',
+        'Officiating Minister': 'Senior Pastor',
         'Notes': 'Historic 2009 Register'
       },
       {
@@ -215,7 +362,7 @@ export function PastDataList({
         'Dedication Year': 2010,
         'Dedicated Date': '2010-10-31',
         'Certificate No': 'DCU-DED-2010-002',
-        'Officiating Minister': 'Senior Pastor',
+        'Officiating Minister': 'Presbytery Pastors',
         'Notes': 'Historic 2010 Register'
       }
     ];
@@ -224,6 +371,116 @@ export function PastDataList({
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Sample_Template');
     XLSX.writeFile(workbook, 'DCU_Past_Dedications_Upload_Template.xlsx');
+  };
+
+  // Find best match for a field among available column headers
+  const autoDetectColumn = (headers: string[], synonyms: string[]): string => {
+    for (const syn of synonyms) {
+      const found = headers.find(h => h.trim().toLowerCase() === syn.toLowerCase());
+      if (found) return found;
+    }
+    // Partial inclusion
+    for (const syn of synonyms) {
+      const found = headers.find(h => h.trim().toLowerCase().includes(syn.toLowerCase()));
+      if (found) return found;
+    }
+    return '';
+  };
+
+  // Re-map rows using current column mapping without altering user data
+  const buildParsedRows = (rows: any[], mapping: Record<string, string>, fileName: string) => {
+    return rows.map((row: any, idx: number) => {
+      // 1. Dedication Date - strictly preserve original date from file
+      const rawDateVal = mapping.serviceDate ? row[mapping.serviceDate] : (row['Dedicated Date'] || row['Dedication Date'] || row['Date'] || '');
+      const parsedDate = parseHistoricalDate(rawDateVal, 2009);
+
+      // Explicit year column if present
+      let dedicationYear = mapping.dedicationYear && row[mapping.dedicationYear]
+        ? parseInt(String(row[mapping.dedicationYear]), 10)
+        : parsedDate.year;
+
+      if (isNaN(dedicationYear) || !dedicationYear) dedicationYear = 2009;
+
+      // 2. Child Name
+      const childName = (mapping.childName && row[mapping.childName] ? row[mapping.childName] : (row['Child Full Name'] || row['Child Name'] || row['Name'] || `Child ${idx + 1}`)).toString().trim();
+
+      // 3. Child DOB
+      const rawDobVal = mapping.childDob ? row[mapping.childDob] : (row['Date of Birth'] || row['DOB'] || '');
+      const parsedDob = rawDobVal ? parseHistoricalDate(rawDobVal, dedicationYear).dateStr : '';
+
+      // 4. Gender
+      const rawGender = (mapping.childGender && row[mapping.childGender] ? row[mapping.childGender] : (row['Gender'] || row['Sex'] || '')).toString().trim().toLowerCase();
+      const childGender = rawGender.startsWith('f') || rawGender.includes('girl') ? 'Female' : 'Male';
+
+      // 5. Parents / Father / Mother
+      let father = (mapping.fatherName && row[mapping.fatherName] ? row[mapping.fatherName] : (row['Father Name'] || row['Father'] || '')).toString().trim();
+      let mother = (mapping.motherName && row[mapping.motherName] ? row[mapping.motherName] : (row['Mother Name'] || row['Mother'] || '')).toString().trim();
+      let parentField = (mapping.parents && row[mapping.parents] ? row[mapping.parents] : (row['Parents'] || row['Parent Name'] || '')).toString().trim();
+
+      // If single Parents column given, split if it has & or and
+      if (!father && !mother && parentField) {
+        if (parentField.includes('&')) {
+          const parts = parentField.split('&');
+          father = parts[0]?.trim() || '';
+          mother = parts[1]?.trim() || '';
+        } else if (parentField.toLowerCase().includes(' and ')) {
+          const parts = parentField.split(/ and /i);
+          father = parts[0]?.trim() || '';
+          mother = parts[1]?.trim() || '';
+        }
+      }
+
+      const parentName = parentField || (father && mother ? `${father} & ${mother}` : father || mother || '');
+
+      // 6. Fellowship & Zone
+      const rawFellowship = (mapping.selectedFellowship && row[mapping.selectedFellowship] ? row[mapping.selectedFellowship] : (row['Fellowship Name'] || row['Fellowship'] || row['Cell'] || row['Residence'] || '')).toString().trim();
+      const fellowship = rawFellowship.toLowerCase() === 'fellowship' ? 'Deliverance Church Utawala' : (rawFellowship || 'Deliverance Church Utawala');
+
+      const rawZone = (mapping.selectedZone && row[mapping.selectedZone] ? row[mapping.selectedZone] : (row['Fellowship Zone'] || row['Zone'] || '')).toString().trim();
+      // Only keep Zone if explicitly provided in file, don't force Zone A
+      const matchedZone = ['Zone A', 'Zone B', 'Zone C', 'Zone D', 'Zone E'].find(
+        z => z.toLowerCase() === rawZone.toLowerCase()
+      ) || (rawZone && rawZone.toLowerCase() !== 'zone a' ? rawZone : '');
+
+      // 7. Officiating Minister - preserve verbatim from file
+      const minister = (mapping.officiatingMinister && row[mapping.officiatingMinister] ? row[mapping.officiatingMinister] : (row['Officiating Minister'] || row['Minister'] || row['Pastor'] || row['Officiated By'] || '')).toString().trim();
+
+      // 8. Certificate Number - preserve verbatim
+      const certNo = (mapping.certificateNumber && row[mapping.certificateNumber] ? row[mapping.certificateNumber] : (row['Certificate No'] || row['Certificate Number'] || row['Cert No'] || row['Certificate'] || '')).toString().trim() ||
+        `DCU-DED-${dedicationYear}-${String(idx + 101).padStart(3, '0')}`;
+
+      // 9. County / Place of Birth
+      const county = (mapping.childCountyOfBirth && row[mapping.childCountyOfBirth] ? row[mapping.childCountyOfBirth] : (row['County of Birth'] || row['County'] || row['Place of Birth'] || 'Nairobi')).toString().trim();
+
+      // 10. Notes / Archival source
+      const notes = (mapping.notes && row[mapping.notes] ? row[mapping.notes] : (row['Notes'] || row['Remarks'] || '')).toString().trim() || 'Historical church register import';
+
+      return {
+        id: `HIST-${dedicationYear}-${String(Date.now()).slice(-4)}-${idx + 1}`,
+        childName,
+        childDob: parsedDob || `${dedicationYear}`,
+        childGender,
+        childCountyOfBirth: county,
+        childPlaceOfBirth: county,
+        fatherName: father,
+        fatherPhone: (mapping.fatherPhone && row[mapping.fatherPhone] ? row[mapping.fatherPhone] : (row['Father Phone'] || row['Phone'] || row['Contact'] || '')).toString().trim(),
+        motherName: mother,
+        motherPhone: (mapping.motherPhone && row[mapping.motherPhone] ? row[mapping.motherPhone] : (row['Mother Phone'] || '')).toString().trim(),
+        parentName,
+        parentPhone: (row['Parent Phone'] || row['Phone'] || row['Contact'] || '').toString().trim(),
+        selectedZone: matchedZone || 'Unallocated',
+        selectedFellowship: fellowship,
+        dedicationYear,
+        serviceDate: parsedDate.dateStr,
+        originalDateRaw: parsedDate.rawOriginal,
+        certificateNumber: certNo,
+        certificateIssued: true,
+        officiatingMinister: minister || '',
+        notes,
+        archivalSource: fileName || 'Historical 2009+ Register',
+        rawRowData: row
+      };
+    });
   };
 
   // Handle CSV / Excel file drop or selection
@@ -239,7 +496,7 @@ export function PastDataList({
     reader.onload = (evt) => {
       try {
         const bstr = evt.target?.result;
-        const workbook = XLSX.read(bstr, { type: 'binary' });
+        const workbook = XLSX.read(bstr, { type: 'binary', cellDates: false });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
         const rawJson: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
@@ -249,101 +506,67 @@ export function PastDataList({
           return;
         }
 
-        // Map columns flexibly
-        const parsed = rawJson.map((row: any, idx: number) => {
-          const childName = (
-            row['Child Full Name'] || 
-            row['Child Name'] || 
-            row['Name'] || 
-            row['childName'] || 
-            row['Full Name'] ||
-            `Child ${idx + 1}`
-          ).toString().trim();
+        const headers = Object.keys(rawJson[0] || {});
+        setFileColumns(headers);
+        setRawFileRows(rawJson);
 
-          const dob = (
-            row['Date of Birth'] || 
-            row['DOB'] || 
-            row['childDob'] || 
-            '2009-01-01'
-          ).toString().trim();
+        // Auto-detect columns intelligently
+        const initialMapping: Record<string, string> = {
+          serviceDate: autoDetectColumn(headers, [
+            'Dedicated Date', 'Dedication Date', 'Date Dedicated', 'Date of Dedication',
+            'Service Date', 'Dedication Sunday', 'Date', 'Dedication', 'Dedicated On', 'D.O.D', 'Ded Date'
+          ]),
+          childName: autoDetectColumn(headers, [
+            'Child Full Name', 'Child Name', "Child's Name", 'Name of Child', 'Full Name', 'Name', 'Candidate', 'Baby Name'
+          ]),
+          childDob: autoDetectColumn(headers, [
+            'Date of Birth', 'DOB', 'D.O.B', 'Birth Date', 'Birthdate', 'Child DOB'
+          ]),
+          childGender: autoDetectColumn(headers, [
+            'Gender', 'Sex', 'Child Gender', 'M/F'
+          ]),
+          parents: autoDetectColumn(headers, [
+            'Parents', 'Parent Name', "Parents' Names", 'Parents Names', 'Father & Mother', 'Parent / Guardian'
+          ]),
+          fatherName: autoDetectColumn(headers, [
+            'Father Name', "Father's Name", 'Father', 'Dad', 'Father Full Name'
+          ]),
+          fatherPhone: autoDetectColumn(headers, [
+            'Father Phone', 'Phone', 'Phone Number', 'Contact', 'Mobile', 'Tel', 'Contacts'
+          ]),
+          motherName: autoDetectColumn(headers, [
+            'Mother Name', "Mother's Name", 'Mother', 'Mom', 'Mother Full Name'
+          ]),
+          motherPhone: autoDetectColumn(headers, [
+            'Mother Phone', 'Mother Mobile'
+          ]),
+          selectedFellowship: autoDetectColumn(headers, [
+            'Fellowship Name', 'Fellowship', 'Cell', 'Cell Group', 'Home Fellowship', 'Residence', 'Estate', 'Area', 'Location'
+          ]),
+          selectedZone: autoDetectColumn(headers, [
+            'Fellowship Zone', 'Zone', 'District', 'Region'
+          ]),
+          officiatingMinister: autoDetectColumn(headers, [
+            'Officiating Minister', 'Minister', 'Pastor', 'Officiated By', 'Presiding Minister', 'Clergy', 'Officiating Pastor'
+          ]),
+          certificateNumber: autoDetectColumn(headers, [
+            'Certificate No', 'Certificate Number', 'Cert No', 'Cert #', 'Certificate', 'Reg No', 'Serial No', 'S/No'
+          ]),
+          childCountyOfBirth: autoDetectColumn(headers, [
+            'County of Birth', 'County', 'Place of Birth', 'Birth Place', 'Town'
+          ]),
+          dedicationYear: autoDetectColumn(headers, [
+            'Dedication Year', 'Year', 'Dedication_Year'
+          ]),
+          notes: autoDetectColumn(headers, [
+            'Notes', 'Remarks', 'Comments', 'Details', 'Source'
+          ])
+        };
 
-          const gender = (
-            row['Gender'] || 
-            row['childGender'] || 
-            'Male'
-          ).toString().toLowerCase().includes('f') ? 'Female' : 'Male';
+        setColumnMapping(initialMapping);
 
-          const father = (
-            row['Father Name'] || 
-            row['Father'] || 
-            row['fatherName'] || 
-            ''
-          ).toString().trim();
-
-          const mother = (
-            row['Mother Name'] || 
-            row['Mother'] || 
-            row['motherName'] || 
-            ''
-          ).toString().trim();
-
-          const zoneRaw = (
-            row['Fellowship Zone'] || 
-            row['Zone'] || 
-            row['selectedZone'] || 
-            'Zone A'
-          ).toString().trim();
-
-          const matchedZone = ['Zone A', 'Zone B', 'Zone C', 'Zone D', 'Zone E'].find(
-            z => z.toLowerCase() === zoneRaw.toLowerCase()
-          ) || 'Zone A';
-
-          const fellowship = (
-            row['Fellowship Name'] || 
-            row['Fellowship'] || 
-            row['selectedFellowship'] || 
-            'Fellowship'
-          ).toString().trim();
-
-          // Year detection
-          let year = Number(row['Dedication Year'] || row['Year'] || row['dedicationYear']);
-          const dateStr = (row['Dedicated Date'] || row['Service Date'] || row['serviceDate'] || '').toString();
-          if (isNaN(year) || !year) {
-            if (dateStr && dateStr.length >= 4) {
-              const y = parseInt(dateStr.slice(0, 4));
-              if (!isNaN(y)) year = y;
-            }
-          }
-          if (isNaN(year) || !year) year = 2009;
-
-          const certNo = (
-            row['Certificate No'] || 
-            row['Certificate Number'] || 
-            row['certificateNumber'] || 
-            `DCU-DED-${year}-${String(idx + 101).padStart(3, '0')}`
-          ).toString().trim();
-
-          return {
-            childName,
-            childDob: dob,
-            childGender: gender,
-            childCountyOfBirth: row['County of Birth'] || row['County'] || 'Nairobi',
-            fatherName: father,
-            fatherPhone: (row['Father Phone'] || row['Father Mobile'] || '').toString().trim(),
-            motherName: mother,
-            motherPhone: (row['Mother Phone'] || row['Mother Mobile'] || '').toString().trim(),
-            parentName: `${father} & ${mother}`.trim() || father || mother,
-            selectedZone: matchedZone,
-            selectedFellowship: fellowship,
-            dedicationYear: year,
-            serviceDate: dateStr || `${year}-11-29`,
-            certificateNumber: certNo,
-            officiatingMinister: (row['Officiating Minister'] || row['Minister'] || 'Senior Pastor & Presbytery').toString().trim(),
-            notes: (row['Notes'] || row['Remarks'] || 'Historical 2009+ register import').toString().trim(),
-            archivalSource: file.name
-          };
-        });
-
+        // Pre-parse rows with detected mapping
+        const parsed = buildParsedRows(rawJson, initialMapping, file.name);
         setImportedPreview(parsed);
       } catch (err: any) {
         console.error('File parsing error', err);
@@ -353,20 +576,42 @@ export function PastDataList({
     reader.readAsBinaryString(file);
   };
 
+  // Re-calculate preview when column mapping changes
+  const handleUpdateMapping = (field: string, selectedHeader: string) => {
+    const updated = { ...columnMapping, [field]: selectedHeader };
+    setColumnMapping(updated);
+    if (rawFileRows.length > 0) {
+      const parsed = buildParsedRows(rawFileRows, updated, importFileName);
+      setImportedPreview(parsed);
+    }
+  };
+
   // Submit Bulk Import
   const handleConfirmImport = async () => {
     if (importedPreview.length === 0) return;
     setIsImporting(true);
     setImportError('');
     try {
-      await onBulkImportPast(importedPreview);
-      setImportSuccessMessage(`Successfully imported ${importedPreview.length} historical records into the Past Dedicated Archive!`);
+      const options = {
+        replaceYear: importMode === 'replace_2009' ? 2009 : undefined,
+        replaceAll: importMode === 'replace_all'
+      };
+
+      await onBulkImportPast(importedPreview, options);
+
+      const msg = importMode === 'replace_2009'
+        ? `Successfully replaced 2009 archival records with ${importedPreview.length} clean, original records!`
+        : `Successfully imported ${importedPreview.length} historical records into the Past Dedicated Archive!`;
+
+      setImportSuccessMessage(msg);
+
       setTimeout(() => {
         setShowImportModal(false);
         setImportedPreview([]);
+        setRawFileRows([]);
         setImportFileName('');
         setImportSuccessMessage('');
-      }, 1400);
+      }, 1500);
     } catch (err: any) {
       setImportError(`Import failed: ${err.message || 'Server error'}`);
     } finally {
@@ -379,22 +624,31 @@ export function PastDataList({
     e.preventDefault();
     if (!formData.childName) return;
 
-    const year = Number(formData.dedicationYear) || 2009;
-    const certNumber = formData.certificateNumber || `DCU-DED-${year}-${Math.floor(100 + Math.random() * 900)}`;
+    const dedicationYear = Number(formData.dedicationYear) || 2009;
+    const certNo = formData.certificateNumber || `DCU-DED-${dedicationYear}-${String(Date.now()).slice(-4)}`;
+    const now = new Date().toISOString();
+
+    const recordData: Partial<PastDedicationRecord> = {
+      ...formData,
+      dedicationYear,
+      certificateNumber: certNo,
+      certificateIssued: true,
+      parentName: formData.parentName || `${formData.fatherName || ''} & ${formData.motherName || ''}`.trim() || formData.fatherName || formData.motherName,
+      selectedFellowship: formData.selectedFellowship || 'Deliverance Church Utawala',
+      selectedZone: formData.selectedZone || 'Unallocated',
+      serviceDate: formData.serviceDate || `${dedicationYear}`,
+      officiatingMinister: formData.officiatingMinister || '',
+      updatedAt: now
+    };
 
     if (editingRecord) {
-      await onUpdatePastDedication(editingRecord.id, {
-        ...formData,
-        dedicationYear: year,
-        certificateNumber: certNumber
-      });
+      await onUpdatePastDedication(editingRecord.id, recordData);
       setEditingRecord(null);
     } else {
       await onAddPastDedication({
-        ...formData,
-        dedicationYear: year,
-        certificateNumber: certNumber,
-        certificateIssued: true
+        ...recordData,
+        id: `HIST-${dedicationYear}-${String(Date.now()).slice(-4)}`,
+        createdAt: now
       });
       setShowAddModal(false);
     }
@@ -409,12 +663,12 @@ export function PastDataList({
       fatherPhone: '',
       motherName: '',
       motherPhone: '',
-      selectedZone: 'Zone A',
-      selectedFellowship: 'Doxa',
+      selectedZone: '',
+      selectedFellowship: 'Deliverance Church Utawala',
       dedicationYear: 2009,
-      serviceDate: '2009-08-30',
+      serviceDate: '2009',
       certificateNumber: '',
-      officiatingMinister: 'Senior Pastor & Presbytery',
+      officiatingMinister: '',
       notes: 'Historical church register entry'
     });
   };
@@ -430,12 +684,12 @@ export function PastDataList({
       fatherPhone: record.fatherPhone || '',
       motherName: record.motherName,
       motherPhone: record.motherPhone || '',
-      selectedZone: record.selectedZone,
+      selectedZone: record.selectedZone || '',
       selectedFellowship: record.selectedFellowship,
       dedicationYear: record.dedicationYear,
       serviceDate: record.serviceDate,
       certificateNumber: record.certificateNumber,
-      officiatingMinister: record.officiatingMinister || 'Senior Pastor & Presbytery',
+      officiatingMinister: record.officiatingMinister || '',
       notes: record.notes || ''
     });
   };
@@ -459,7 +713,7 @@ export function PastDataList({
           </h1>
           <p className="text-xs sm:text-sm text-[#f6efe2]/80 max-w-2xl leading-relaxed">
             Historical repository of all infants dedicated at Deliverance Church Utawala from <strong>2009 to Present</strong>.
-            This past database is kept <strong>strictly isolated</strong> from new ongoing parent registrations and active service compilation lists.
+            Preserves <strong>original dates, fellowships, ministers, and records</strong> without automated alterations.
           </p>
           <div className="flex flex-wrap items-center gap-3 pt-2">
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-300 bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-0.5 rounded-md">
@@ -480,7 +734,7 @@ export function PastDataList({
             className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 shadow-md transition-all cursor-pointer"
           >
             <Upload className="w-4 h-4" />
-            Import CSV / Excel (2009+)
+            Import / Rearrange CSV (2009+)
           </button>
 
           <button
@@ -520,28 +774,28 @@ export function PastDataList({
             className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1.5 ${
               selectedYear === 'All'
                 ? 'bg-[#2a170e] text-[#ffd700] shadow-sm'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
             }`}
           >
             All Years ({pastDedications.length})
           </button>
-          {availableYears.map((year) => {
-            const count = yearCounts[String(year)] || 0;
+          {availableYears.map((yr) => {
+            const count = yearCounts[String(yr)] || 0;
             return (
               <button
-                key={year}
-                onClick={() => setSelectedYear(String(year))}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1 ${
-                  selectedYear === String(year)
-                    ? 'bg-[#d4af37] text-[#2a170e] shadow-sm'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                key={yr}
+                onClick={() => setSelectedYear(String(yr))}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1.5 ${
+                  selectedYear === String(yr)
+                    ? 'bg-[#d4af37] text-[#2a170e] shadow-sm ring-2 ring-[#2a170e]'
+                    : count > 0
+                    ? 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200'
+                    : 'bg-gray-50 text-gray-400 hover:bg-gray-100'
                 }`}
               >
-                <span>{year}</span>
+                <span>{yr}</span>
                 {count > 0 && (
-                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                    selectedYear === String(year) ? 'bg-[#2a170e] text-[#ffd700]' : 'bg-gray-200 text-gray-700'
-                  }`}>
+                  <span className="px-1.5 py-0.2 bg-[#2a170e] text-[#ffd700] rounded-full text-[10px]">
                     {count}
                   </span>
                 )}
@@ -551,29 +805,30 @@ export function PastDataList({
         </div>
       </div>
 
-      {/* Filter Row: Search, Zone, Gender */}
-      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-gray-200 shadow-xs grid grid-cols-1 md:grid-cols-12 gap-3">
-        <div className="md:col-span-6 relative">
-          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
+      {/* Search & Filters */}
+      <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+        <div className="md:col-span-5 relative">
+          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by child name, certificate #, parent name, fellowship..."
-            className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden bg-gray-50/50"
+            placeholder="Search by child name, parent, fellowship, minister, or date..."
+            className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
           />
         </div>
 
-        <div className="md:col-span-3">
+        <div className="md:col-span-4">
           <select
             value={selectedZone}
             onChange={(e) => setSelectedZone(e.target.value)}
             className="w-full py-2 px-3 text-xs sm:text-sm border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-[#d4af37] outline-hidden"
           >
-            <option value="All">All Fellowship Zones (A to E)</option>
+            <option value="All">All Fellowship Zones</option>
             {ZONES.map((z) => (
               <option key={z.name} value={z.name}>{z.name}</option>
             ))}
+            <option value="Unallocated">Historical / Unallocated</option>
           </select>
         </div>
 
@@ -598,7 +853,7 @@ export function PastDataList({
           </div>
           <h3 className="text-lg font-cinzel font-bold text-gray-800">No Past Records Found for Selected Criteria</h3>
           <p className="text-xs sm:text-sm text-gray-500 max-w-md mx-auto">
-            Try adjusting your search keywords, year filter ({selectedYear}), or click <strong>"Import CSV / Excel"</strong> to upload your 2009+ dedicated children archive list.
+            Try adjusting your search keywords, year filter ({selectedYear}), or click <strong>"Import / Rearrange CSV"</strong> to upload your 2009+ dedicated children archive list.
           </p>
           <div className="flex justify-center gap-3 pt-2">
             <button
@@ -642,7 +897,7 @@ export function PastDataList({
                       {item.childName}
                     </h3>
                     <p className="text-[11px] text-gray-500">
-                      Born: {item.childDob} ({item.childGender}) • {item.childCountyOfBirth || item.childPlaceOfBirth} County
+                      {item.childDob ? `Born: ${item.childDob} (${item.childGender})` : `Gender: ${item.childGender}`} • {item.childCountyOfBirth || item.childPlaceOfBirth || 'Nairobi'} County
                     </p>
                   </div>
                   <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
@@ -654,25 +909,35 @@ export function PastDataList({
                   <p>
                     <span className="text-gray-400 font-semibold">Parents:</span>{' '}
                     <strong className="text-gray-800">
-                      {item.parentName || `${item.fatherName || ''} & ${item.motherName || ''}`.trim() || item.fatherName || item.motherName}
+                      {item.parentName || `${item.fatherName || ''} & ${item.motherName || ''}`.trim() || item.fatherName || item.motherName || 'Parent not specified'}
                     </strong>
                   </p>
-                  {item.fatherPhone && (
+                  {(item.fatherPhone || item.motherPhone || item.parentPhone) && (
                     <p className="text-[11px] text-gray-500">
-                      <span className="text-gray-400">Phone:</span> {item.fatherPhone} {item.motherPhone ? `• ${item.motherPhone}` : ''}
+                      <span className="text-gray-400">Phone:</span> {item.fatherPhone || item.parentPhone || ''} {item.motherPhone ? `• ${item.motherPhone}` : ''}
                     </p>
                   )}
                   <p>
-                    <span className="text-gray-400 font-semibold">Fellowship:</span>{' '}
-                    {item.selectedFellowship} ({item.selectedZone})
+                    <span className="text-gray-400 font-semibold">Fellowship / Location:</span>{' '}
+                    <span className="font-medium text-gray-800">
+                      {formatFellowshipDisplay(item.selectedFellowship, item.selectedZone)}
+                    </span>
                   </p>
                   <p>
                     <span className="text-gray-400 font-semibold">Dedicated On:</span>{' '}
-                    <strong className="text-[#2a170e]">{item.serviceDate}</strong>
+                    <strong className="text-[#2a170e] font-mono bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60">
+                      {item.serviceDate || `${item.dedicationYear}`}
+                    </strong>
                   </p>
                   {item.officiatingMinister && (
-                    <p className="text-[11px] text-gray-500">
-                      <span className="text-gray-400">Minister:</span> {item.officiatingMinister}
+                    <p className="text-[11px] text-gray-600">
+                      <span className="text-gray-400 font-semibold">Minister:</span>{' '}
+                      <span className="font-medium">{item.officiatingMinister}</span>
+                    </p>
+                  )}
+                  {item.notes && item.notes !== 'Historical church register entry' && (
+                    <p className="text-[10px] text-gray-400 italic">
+                      Ref: {item.notes}
                     </p>
                   )}
                 </div>
@@ -711,22 +976,23 @@ export function PastDataList({
       )}
 
       {/* ==================================================== */}
-      {/* MODAL 1: IMPORT CSV / EXCEL ARCHIVE (2009+)          */}
+      {/* MODAL 1: IMPORT & REARRANGE CSV / EXCEL ARCHIVE      */}
       {/* ==================================================== */}
       {showImportModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="relative bg-white rounded-3xl max-w-3xl w-full p-6 sm:p-8 shadow-2xl my-8 space-y-6">
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="relative bg-white rounded-3xl max-w-4xl w-full p-6 sm:p-8 shadow-2xl my-8 space-y-6 max-h-[92vh] overflow-y-auto">
+            {/* Modal Header */}
             <div className="flex items-center justify-between pb-4 border-b border-gray-200">
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center">
-                  <Upload className="w-5 h-5 text-emerald-700" />
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-700" />
                 </div>
                 <div>
                   <h2 className="text-xl font-cinzel font-bold text-gray-900">
-                    Import Past Dedications Archive (2009 - Date)
+                    Import Historical Dedicated Children (2009+)
                   </h2>
                   <p className="text-xs text-gray-500">
-                    Upload your CSV or Excel file containing children dedicated since 2009.
+                    Upload and flexibly rearrange old registers while strictly preserving original dates and data.
                   </p>
                 </div>
               </div>
@@ -734,6 +1000,7 @@ export function PastDataList({
                 onClick={() => {
                   setShowImportModal(false);
                   setImportedPreview([]);
+                  setRawFileRows([]);
                   setImportFileName('');
                 }}
                 className="text-gray-400 hover:text-gray-600 font-bold p-1 cursor-pointer"
@@ -742,27 +1009,28 @@ export function PastDataList({
               </button>
             </div>
 
-            {/* Template Download & Instructions */}
-            <div className="bg-amber-50/80 p-4 rounded-2xl border border-amber-200/80 text-xs text-[#2a170e] space-y-2">
-              <div className="flex items-center justify-between">
+            {/* Template Download & Notice */}
+            <div className="bg-amber-50/90 p-4 rounded-2xl border border-amber-200/90 text-xs text-[#2a170e] space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-bold flex items-center gap-1.5 text-amber-900">
-                  <FileSpreadsheet className="w-4 h-4 text-[#aa8222]" /> Accepted Format: CSV, XLSX, XLS
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" /> Original Data Preservation Policy
                 </span>
                 <button
                   onClick={handleDownloadTemplate}
                   className="text-xs font-bold text-[#aa8222] hover:text-[#2a170e] underline cursor-pointer flex items-center gap-1"
                 >
-                  <Download className="w-3.5 h-3.5" /> Download Sample CSV Template
+                  <Download className="w-3.5 h-3.5" /> Download Reference Template
                 </button>
               </div>
-              <p className="text-gray-600">
-                Recommended columns: <strong>Child Full Name</strong>, <strong>Date of Birth</strong>, <strong>Gender</strong>, <strong>Father Name</strong>, <strong>Mother Name</strong>, <strong>Fellowship Zone</strong> (Zone A-E), <strong>Fellowship Name</strong>, <strong>Dedication Year</strong> (e.g. 2009), <strong>Dedicated Date</strong>, and <strong>Certificate No</strong>.
+              <p className="text-gray-700 leading-relaxed">
+                The system automatically detects columns from your 2009 CSV file and rearranges them to fill the archive properly.
+                <strong> Original dates, ministers, and fellowships are faithfully preserved</strong> — the system will not overwrite your dates with defaults.
               </p>
             </div>
 
             {/* Dropzone */}
-            <div className="border-2 border-dashed border-gray-300 hover:border-[#d4af37] rounded-3xl p-8 text-center space-y-3 bg-gray-50/60 transition-all">
-              <Upload className="w-10 h-10 text-gray-400 mx-auto" />
+            <div className="border-2 border-dashed border-gray-300 hover:border-[#d4af37] rounded-3xl p-6 sm:p-8 text-center space-y-3 bg-gray-50/60 transition-all">
+              <Upload className="w-8 h-8 text-gray-400 mx-auto" />
               <div>
                 <label className="bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm cursor-pointer shadow-md inline-block">
                   Select CSV or Excel File
@@ -776,9 +1044,11 @@ export function PastDataList({
               </div>
               <p className="text-xs text-gray-500">
                 {importFileName ? (
-                  <span className="font-bold text-emerald-700">Selected file: {importFileName}</span>
+                  <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200 inline-block">
+                    ✓ Loaded File: {importFileName} ({rawFileRows.length} rows detected)
+                  </span>
                 ) : (
-                  'Or drag and drop DCU_Past_Dedications_Archive_upload.csv here'
+                  'Drag and drop your 2009 dedicated children CSV or click above to browse'
                 )}
               </p>
             </div>
@@ -797,38 +1067,378 @@ export function PastDataList({
               </div>
             )}
 
-            {/* Preview of Parsed Rows */}
+            {/* ========================================================= */}
+            {/* COLUMN REARRANGEMENT / MAPPING INTERFACE                 */}
+            {/* ========================================================= */}
+            {fileColumns.length > 0 && (
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
+                  <div className="flex items-center gap-2">
+                    <SlidersHorizontal className="w-4 h-4 text-[#aa8222]" />
+                    <h3 className="font-bold text-sm text-gray-900">
+                      Rearrange File Columns to Fill Archive Fields
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowMapperConfig(!showMapperConfig)}
+                    className="text-xs font-bold text-[#aa8222] hover:text-[#2a170e] flex items-center gap-1 cursor-pointer"
+                  >
+                    {showMapperConfig ? 'Hide Column Adjustments' : 'Adjust Column Mapping'}
+                    {showMapperConfig ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+
+                {/* Mapping dropdowns */}
+                {showMapperConfig && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5 pt-2">
+                    {/* Dedication Date */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        Dedicated Date * (Preserves exact date)
+                      </label>
+                      <select
+                        value={columnMapping.serviceDate || ''}
+                        onChange={(e) => handleUpdateMapping('serviceDate', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- Leave Blank / Extract Year --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Child Name */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        Child Full Name *
+                      </label>
+                      <select
+                        value={columnMapping.childName || ''}
+                        onChange={(e) => handleUpdateMapping('childName', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- Select Column --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Parents Column (Composite) */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        Parents / Family (Composite)
+                      </label>
+                      <select
+                        value={columnMapping.parents || ''}
+                        onChange={(e) => handleUpdateMapping('parents', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- None (Use Father/Mother) --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Father Name */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        Father's Name
+                      </label>
+                      <select
+                        value={columnMapping.fatherName || ''}
+                        onChange={(e) => handleUpdateMapping('fatherName', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- None --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Mother Name */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        Mother's Name
+                      </label>
+                      <select
+                        value={columnMapping.motherName || ''}
+                        onChange={(e) => handleUpdateMapping('motherName', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- None --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Phone / Contact */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        Phone / Contact
+                      </label>
+                      <select
+                        value={columnMapping.fatherPhone || ''}
+                        onChange={(e) => handleUpdateMapping('fatherPhone', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- None --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Fellowship / Residence */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        Fellowship / Cell / Estate
+                      </label>
+                      <select
+                        value={columnMapping.selectedFellowship || ''}
+                        onChange={(e) => handleUpdateMapping('selectedFellowship', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- Deliverance Church Utawala --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Fellowship Zone */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        Fellowship Zone (Optional)
+                      </label>
+                      <select
+                        value={columnMapping.selectedZone || ''}
+                        onChange={(e) => handleUpdateMapping('selectedZone', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- None (Keep as in file) --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Officiating Minister */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        Officiating Minister / Pastor
+                      </label>
+                      <select
+                        value={columnMapping.officiatingMinister || ''}
+                        onChange={(e) => handleUpdateMapping('officiatingMinister', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- Leave Blank / As in file --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Certificate Number */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        Certificate No / Register Ref
+                      </label>
+                      <select
+                        value={columnMapping.certificateNumber || ''}
+                        onChange={(e) => handleUpdateMapping('certificateNumber', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- Auto-generate if missing --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Date of Birth */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        Date of Birth (DOB)
+                      </label>
+                      <select
+                        value={columnMapping.childDob || ''}
+                        onChange={(e) => handleUpdateMapping('childDob', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- None in file --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* County / Place of Birth */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-gray-700">
+                        County / Place of Birth
+                      </label>
+                      <select
+                        value={columnMapping.childCountyOfBirth || ''}
+                        onChange={(e) => handleUpdateMapping('childCountyOfBirth', e.target.value)}
+                        className="w-full text-xs p-2 border border-gray-300 rounded-xl bg-white"
+                      >
+                        <option value="">-- Nairobi --</option>
+                        {fileColumns.map(col => (
+                          <option key={col} value={col}>
+                            {col} {rawFileRows[0]?.[col] ? `(e.g. "${rawFileRows[0][col]}")` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {/* Import Mode Selector */}
+                <div className="pt-2 border-t border-slate-200">
+                  <label className="block text-xs font-bold text-gray-700 mb-2">
+                    Select Import Mode:
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                    <label className={`p-3 rounded-xl border flex items-start gap-2.5 cursor-pointer transition-all ${
+                      importMode === 'append' ? 'bg-white border-[#aa8222] ring-2 ring-[#d4af37]/40 shadow-xs' : 'bg-slate-100 border-slate-200'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="importMode"
+                        checked={importMode === 'append'}
+                        onChange={() => setImportMode('append')}
+                        className="mt-0.5 text-[#aa8222]"
+                      />
+                      <div>
+                        <strong className="block text-gray-800">Append New Records</strong>
+                        <span className="text-[11px] text-gray-500">Add to existing past records without overwriting.</span>
+                      </div>
+                    </label>
+
+                    <label className={`p-3 rounded-xl border flex items-start gap-2.5 cursor-pointer transition-all ${
+                      importMode === 'replace_2009' ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-400/40 shadow-xs' : 'bg-slate-100 border-slate-200'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="importMode"
+                        checked={importMode === 'replace_2009'}
+                        onChange={() => setImportMode('replace_2009')}
+                        className="mt-0.5 text-amber-600"
+                      />
+                      <div>
+                        <strong className="block text-amber-900">Clean & Replace 2009 Records</strong>
+                        <span className="text-[11px] text-amber-700">Replaces old 2009 records with this clean original CSV file.</span>
+                      </div>
+                    </label>
+
+                    <label className={`p-3 rounded-xl border flex items-start gap-2.5 cursor-pointer transition-all ${
+                      importMode === 'replace_all' ? 'bg-red-50 border-red-500 ring-2 ring-red-400/40 shadow-xs' : 'bg-slate-100 border-slate-200'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="importMode"
+                        checked={importMode === 'replace_all'}
+                        onChange={() => setImportMode('replace_all')}
+                        className="mt-0.5 text-red-600"
+                      />
+                      <div>
+                        <strong className="block text-red-900">Replace Entire Archive</strong>
+                        <span className="text-[11px] text-red-700">Full archive reset with this new upload.</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ========================================================= */}
+            {/* LIVE PREVIEW OF REARRANGED ROWS                           */}
+            {/* ========================================================= */}
             {importedPreview.length > 0 && (
               <div className="space-y-3">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-gray-700">
-                    Previewing {importedPreview.length} Parsed Records (First 5 shown):
-                  </span>
-                  <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-md">
-                    Ready to Import
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-gray-800">
+                      Rearranged Preview ({importedPreview.length} Records Detected):
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Original Dates Preserved
+                    </span>
+                  </div>
+                  <span className="text-gray-500 text-[11px]">
+                    Showing first 5 rows
                   </span>
                 </div>
-                <div className="overflow-x-auto border border-gray-200 rounded-2xl max-h-48">
+
+                <div className="overflow-x-auto border border-gray-200 rounded-2xl max-h-56">
                   <table className="w-full text-[11px] text-left">
-                    <thead className="bg-gray-100 text-gray-600 font-bold border-b border-gray-200">
+                    <thead className="bg-[#2a170e] text-[#ffd700] font-cinzel text-[11px] border-b border-gray-200 sticky top-0">
                       <tr>
-                        <th className="p-2">Year</th>
-                        <th className="p-2">Child Name</th>
-                        <th className="p-2">DOB</th>
-                        <th className="p-2">Father / Mother</th>
-                        <th className="p-2">Zone & Fellowship</th>
-                        <th className="p-2">Cert #</th>
+                        <th className="p-2.5">Original Dedication Date</th>
+                        <th className="p-2.5">Child Full Name</th>
+                        <th className="p-2.5">Parents / Family</th>
+                        <th className="p-2.5">Fellowship / Location</th>
+                        <th className="p-2.5">Zone</th>
+                        <th className="p-2.5">Officiating Minister</th>
+                        <th className="p-2.5">Certificate No</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
+                    <tbody className="divide-y divide-gray-100 bg-white">
                       {importedPreview.slice(0, 5).map((row, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50">
-                          <td className="p-2 font-bold text-purple-700">{row.dedicationYear}</td>
-                          <td className="p-2 font-bold text-gray-800">{row.childName}</td>
-                          <td className="p-2 text-gray-500">{row.childDob}</td>
-                          <td className="p-2 text-gray-600">{row.fatherName || row.motherName}</td>
-                          <td className="p-2 text-gray-600">{row.selectedFellowship} ({row.selectedZone})</td>
-                          <td className="p-2 font-mono text-[10px] text-amber-700">{row.certificateNumber}</td>
+                        <tr key={idx} className="hover:bg-amber-50/40">
+                          <td className="p-2.5 font-bold font-mono text-[#2a170e] bg-amber-50/80">
+                            {row.serviceDate}
+                            {row.originalDateRaw && row.originalDateRaw !== row.serviceDate && (
+                              <span className="block text-[9px] text-gray-400 font-normal">
+                                raw: "{row.originalDateRaw}"
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2.5 font-bold text-gray-900">{row.childName}</td>
+                          <td className="p-2.5 text-gray-700">
+                            {row.parentName || `${row.fatherName || ''} & ${row.motherName || ''}`.trim() || '-'}
+                          </td>
+                          <td className="p-2.5 font-medium text-gray-800">
+                            {row.selectedFellowship}
+                          </td>
+                          <td className="p-2.5 text-gray-500">
+                            {row.selectedZone && row.selectedZone !== 'Unallocated' ? row.selectedZone : '-'}
+                          </td>
+                          <td className="p-2.5 text-gray-600">
+                            {row.officiatingMinister || '-'}
+                          </td>
+                          <td className="p-2.5 font-mono text-[10px] text-amber-800">
+                            {row.certificateNumber}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -844,6 +1454,7 @@ export function PastDataList({
                 onClick={() => {
                   setShowImportModal(false);
                   setImportedPreview([]);
+                  setRawFileRows([]);
                 }}
                 className="px-4 py-2 rounded-xl text-xs font-bold text-gray-600 hover:bg-gray-100 cursor-pointer"
               >
@@ -853,17 +1464,23 @@ export function PastDataList({
                 type="button"
                 onClick={handleConfirmImport}
                 disabled={importedPreview.length === 0 || isImporting}
-                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 cursor-pointer shadow-md"
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 cursor-pointer shadow-md transition-all"
               >
                 {isImporting ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    Importing {importedPreview.length} Records...
+                    <span>Filling Historical Archive...</span>
                   </>
                 ) : (
                   <>
                     <Check className="w-4 h-4" />
-                    Confirm & Import {importedPreview.length} Past Records
+                    <span>
+                      {importMode === 'replace_2009'
+                        ? `Confirm & Replace 2009 Archive (${importedPreview.length} Records)`
+                        : importMode === 'replace_all'
+                        ? `Confirm & Replace Entire Archive (${importedPreview.length} Records)`
+                        : `Confirm & Import (${importedPreview.length} Records)`}
+                    </span>
                   </>
                 )}
               </button>
@@ -884,7 +1501,7 @@ export function PastDataList({
                   {editingRecord ? 'Edit Historical Record' : 'Add Past Dedicated Child (2009+)'}
                 </h2>
                 <p className="text-xs text-gray-500">
-                  Record dedicated children from older church paper registers or archives.
+                  Record dedicated children from older church paper registers or archives without forced defaults.
                 </p>
               </div>
               <button
@@ -931,12 +1548,13 @@ export function PastDataList({
 
                 <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">
-                    Date of Birth
+                    Date of Birth (DOB)
                   </label>
                   <input
-                    type="date"
+                    type="text"
                     value={formData.childDob || ''}
                     onChange={(e) => setFormData({ ...formData, childDob: e.target.value })}
+                    placeholder="e.g. 2009-02-14 or 14/02/2009"
                     className="w-full px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
                   />
                 </div>
@@ -957,25 +1575,27 @@ export function PastDataList({
 
                 <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">
-                    County of Birth
+                    Dedication Sunday Service Date * (Preserves exact date)
                   </label>
                   <input
                     type="text"
-                    value={formData.childCountyOfBirth || 'Nairobi'}
-                    onChange={(e) => setFormData({ ...formData, childCountyOfBirth: e.target.value })}
-                    placeholder="e.g. Nairobi, Kiambu, Machakos"
-                    className="w-full px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
+                    required
+                    value={formData.serviceDate || ''}
+                    onChange={(e) => setFormData({ ...formData, serviceDate: e.target.value })}
+                    placeholder="e.g. 2009-08-30 or 2009"
+                    className="w-full px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden font-mono"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">
-                    Dedication Sunday Service Date
+                    County of Birth
                   </label>
                   <input
-                    type="date"
-                    value={formData.serviceDate || '2009-08-30'}
-                    onChange={(e) => setFormData({ ...formData, serviceDate: e.target.value })}
+                    type="text"
+                    value={formData.childCountyOfBirth || ''}
+                    onChange={(e) => setFormData({ ...formData, childCountyOfBirth: e.target.value })}
+                    placeholder="e.g. Nairobi, Kiambu, Nakuru"
                     className="w-full px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
                   />
                 </div>
@@ -1008,13 +1628,27 @@ export function PastDataList({
 
                 <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Fellowship / Residence / Cell
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.selectedFellowship || ''}
+                    onChange={(e) => setFormData({ ...formData, selectedFellowship: e.target.value })}
+                    placeholder="e.g. Deliverance Church Utawala, Doxa, Kincar"
+                    className="w-full px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
                     Fellowship Zone
                   </label>
                   <select
-                    value={formData.selectedZone || 'Zone A'}
+                    value={formData.selectedZone || ''}
                     onChange={(e) => setFormData({ ...formData, selectedZone: e.target.value as any })}
                     className="w-full px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
                   >
+                    <option value="">None / Historical Unallocated</option>
                     {ZONES.map((z) => (
                       <option key={z.name} value={z.name}>{z.name}</option>
                     ))}
@@ -1023,13 +1657,13 @@ export function PastDataList({
 
                 <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">
-                    Fellowship Name
+                    Officiating Minister / Pastor
                   </label>
                   <input
                     type="text"
-                    value={formData.selectedFellowship || 'Doxa'}
-                    onChange={(e) => setFormData({ ...formData, selectedFellowship: e.target.value })}
-                    placeholder="e.g. Doxa, Neema, Dominion"
+                    value={formData.officiatingMinister || ''}
+                    onChange={(e) => setFormData({ ...formData, officiatingMinister: e.target.value })}
+                    placeholder="e.g. Rev. Senior Pastor, Presbytery"
                     className="w-full px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
                   />
                 </div>
@@ -1044,19 +1678,6 @@ export function PastDataList({
                     onChange={(e) => setFormData({ ...formData, certificateNumber: e.target.value })}
                     placeholder="Auto-generated if empty e.g. DCU-DED-2009-001"
                     className="w-full px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">
-                    Officiating Minister
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.officiatingMinister || 'Senior Pastor & Presbytery'}
-                    onChange={(e) => setFormData({ ...formData, officiatingMinister: e.target.value })}
-                    placeholder="Senior Pastor & Presbytery"
-                    className="w-full px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
                   />
                 </div>
               </div>

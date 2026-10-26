@@ -101,12 +101,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     avatar?: string;
     invitationToken?: string;
   }) => {
-    const emailToUse = preset?.email || 'fawany@gmail.com';
-    const nameToUse = preset?.name || (emailToUse.split('@')[0]);
+    const cleanEmail = preset?.email?.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      throw new Error('Please enter your Google email address to sign in.');
+    }
+    const nameToUse = preset?.name || (cleanEmail.split('@')[0]);
     const avatarToUse = preset?.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(nameToUse)}`;
 
     const res = await api.loginGoogle({
-      email: emailToUse,
+      email: cleanEmail,
       name: nameToUse,
       avatar: avatarToUse,
       invitationToken: preset?.invitationToken

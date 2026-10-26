@@ -8,72 +8,57 @@ import {
   AlertCircle, 
   User, 
   ArrowRight, 
-  Phone, 
   KeyRound, 
-  Sparkles, 
   Eye, 
   EyeOff, 
-  Crown,
-  ChevronDown,
-  ChevronUp
+  Sparkles
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-export function AuthModal() {
+interface AuthModalProps {
+  onNavigate?: (tab: string) => void;
+}
+
+export function AuthModal({ onNavigate }: AuthModalProps) {
   const { 
     isAuthModalOpen, 
     closeAuthModal, 
     loginWithEmail, 
-    createAccount, 
     loginWithGoogle, 
-    acceptInvitation,
-    bootstrapAdmin 
+    acceptInvitation 
   } = useAuth();
 
-  const [tab, setTab] = useState<'signin' | 'signup'>('signin');
+  const [tab, setTab] = useState<'signin' | 'invite'>('signin');
   
-  // Sign in fields - prefilled with default admin for instant convenience
-  const [email, setEmail] = useState('fawany@gmail.com');
-  const [password, setPassword] = useState('DcuAdmin2026!#');
+  // Sign in fields - clean and empty by default
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Sign up fields
-  const [signupName, setSignupName] = useState('');
-  const [signupEmail, setSignupEmail] = useState('');
-  const [signupPhone, setSignupPhone] = useState('');
-  const [signupPassword, setSignupPassword] = useState('');
-  const [showSignupPassword, setShowSignupPassword] = useState(false);
-
-  // Custom Super Admin bootstrap toggle
-  const [showCustomAdminBootstrap, setShowCustomAdminBootstrap] = useState(false);
-  const [customAdminEmail, setCustomAdminEmail] = useState('');
-  const [customAdminPassword, setCustomAdminPassword] = useState('');
-  const [customAdminName, setCustomAdminName] = useState('');
-
-  // Staff Invite drawer toggle
-  const [showInviteDrawer, setShowInviteDrawer] = useState(false);
+  // Staff Invite activation fields
   const [inviteToken, setInviteToken] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [invitePassword, setInvitePassword] = useState('');
+  const [showInvitePassword, setShowInvitePassword] = useState(false);
   const [inviteName, setInviteName] = useState('');
 
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Auto-detect invitation tokens in URL
+  // Auto-detect invitation tokens in URL (?invite=...&email=...)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const token = params.get('invite');
       const em = params.get('email');
       if (token) {
-        setShowInviteDrawer(true);
+        setTab('invite');
         setInviteToken(token);
         if (em) setInviteEmail(em);
       }
     }
-  }, []);
+  }, [isAuthModalOpen]);
 
   if (!isAuthModalOpen) return null;
 
@@ -94,8 +79,12 @@ export function AuthModal() {
     setLoading(true);
     try {
       const user = await loginWithEmail(cleanEmail, password);
-      const roleTitle = user.role === 'super_admin' ? 'Super Administrator' : user.role.replace('_', ' ');
-      setSuccessMsg(`Signed in successfully as ${roleTitle}!`);
+      const roleTitle = user.role === 'super_admin' 
+        ? 'Super Administrator' 
+        : user.role === 'fellowship_leader'
+        ? `${user.assignedZone || 'Fellowship'} Leader`
+        : user.role.replace('_', ' ');
+      setSuccessMsg(`Welcome, ${user.name}! Signed in as ${roleTitle}.`);
       setTimeout(() => closeAuthModal(), 500);
     } catch (err: any) {
       setError(err?.message || 'Authentication failed. Please verify your email and password.');
@@ -104,139 +93,74 @@ export function AuthModal() {
     }
   };
 
-  // 2. Direct 1-Click Super Admin Sign In
-  const handleInstantAdminLogin = async () => {
-    setError('');
-    setEmail('fawany@gmail.com');
-    setPassword('DcuAdmin2026!#');
-    setLoading(true);
-    try {
-      await loginWithEmail('fawany@gmail.com', 'DcuAdmin2026!#');
-      setSuccessMsg('Welcome back, Super Administrator! Access Granted.');
-      setTimeout(() => closeAuthModal(), 500);
-    } catch (err: any) {
-      setError(err?.message || 'Sign in failed. Please retry.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 3. Continue with Google
+  // 2. Continue with Google
   const handleGoogleLogin = async () => {
     setError('');
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setError('Please enter your Google account email in the Email Address field above, then click Continue with Google.');
+      return;
+    }
+
     setLoading(true);
-    const targetEmail = email.trim().includes('@') ? email.trim().toLowerCase() : 'fawany@gmail.com';
     try {
       const user = await loginWithGoogle({
-        email: targetEmail,
-        name: targetEmail.split('@')[0]
+        email: cleanEmail,
+        name: cleanEmail.split('@')[0]
       });
-      const roleTitle = user.role === 'super_admin' ? 'Super Administrator' : user.role.replace('_', ' ');
+
+      if (user.role === 'parent') {
+        setError('Notice: This Google account is not registered as an authorized church leader. Fellowship leaders and pastors must be invited by Church Administration.');
+        setLoading(false);
+        return;
+      }
+
+      const roleTitle = user.role === 'super_admin' 
+        ? 'Super Administrator' 
+        : user.role === 'fellowship_leader'
+        ? `${user.assignedZone || 'Fellowship'} Leader`
+        : user.role.replace('_', ' ');
       setSuccessMsg(`Authenticated via Google as ${user.email} (${roleTitle})!`);
       setTimeout(() => closeAuthModal(), 500);
     } catch (err: any) {
-      setError(err?.message || 'Google authentication failed. Please try 1-Click Super Admin or email login.');
+      setError(err?.message || 'Google authentication failed. Please sign in with your email & password.');
     } finally {
       setLoading(false);
     }
   };
 
-  // 4. Custom Super Admin Account Activation (Bootstrap)
-  const handleCustomAdminBootstrap = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    const cleanEmail = customAdminEmail.trim().toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setError('Please enter your valid email address to assign Super Admin privileges.');
-      return;
-    }
-    if (customAdminPassword.length < 8) {
-      setError('Please set a password of at least 8 characters.');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      await bootstrapAdmin({
-        bootstrapSecret: 'DCU-ADMIN-BOOTSTRAP-2026-SECURE',
-        email: cleanEmail,
-        password: customAdminPassword,
-        name: customAdminName.trim() || cleanEmail.split('@')[0]
-      });
-      setSuccessMsg(`Account ${cleanEmail} is now registered and logged in as Super Administrator!`);
-      setTimeout(() => closeAuthModal(), 600);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to register Super Admin account.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 5. Parent Sign Up
-  const handleParentSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-
-    const cleanEmail = signupEmail.trim().toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setError('Please enter a valid email address.');
-      return;
-    }
-    if (!signupName.trim()) {
-      setError('Please enter your full name.');
-      return;
-    }
-    if (signupPassword.length < 6) {
-      setError('Password must be at least 6 characters.');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      await createAccount({
-        email: cleanEmail,
-        name: signupName.trim(),
-        phone: signupPhone.trim(),
-        password: signupPassword
-      });
-      setSuccessMsg('Parent account created successfully! You are now logged in.');
-      setTimeout(() => closeAuthModal(), 600);
-    } catch (err: any) {
-      setError(err?.message || 'Account registration failed.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 6. Accept Staff Invite
+  // 3. Accept Staff / Leader Invite
   const handleStaffInviteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!inviteToken.trim()) {
-      setError('Please enter your invitation token.');
+      setError('Please enter your single-use invitation token.');
       return;
     }
     if (!inviteEmail.trim() || !inviteEmail.includes('@')) {
-      setError('Please enter the email address the invitation was sent to.');
+      setError('Please enter the email address your invitation was sent to.');
       return;
     }
     if (invitePassword.length < 6) {
-      setError('Please choose a password of at least 6 characters.');
+      setError('Please choose a secure password of at least 6 characters.');
       return;
     }
 
     setLoading(true);
     try {
-      await acceptInvitation({
+      const user = await acceptInvitation({
         token: inviteToken.trim(),
         email: inviteEmail.trim().toLowerCase(),
         password: invitePassword,
         name: inviteName.trim()
       });
-      setSuccessMsg('Staff invitation verified and activated!');
-      setTimeout(() => closeAuthModal(), 700);
+      const roleTitle = user.role === 'fellowship_leader' 
+        ? `${user.assignedZone || 'Fellowship'} Leader` 
+        : user.role.replace('_', ' ');
+      setSuccessMsg(`Invitation verified! Account activated as ${roleTitle}.`);
+      setTimeout(() => closeAuthModal(), 600);
     } catch (err: any) {
-      setError(err?.message || 'Failed to activate staff invitation.');
+      setError(err?.message || 'Failed to activate invitation. Please check token and email.');
     } finally {
       setLoading(false);
     }
@@ -259,14 +183,14 @@ export function AuthModal() {
             <ChurchLogo size={58} className="shadow-lg" />
           </div>
           <h2 className="text-xl sm:text-2xl font-cinzel font-bold text-[#2a170e]">
-            {tab === 'signin' ? 'Sign In to DCU Portal' : 'Create an Account'}
+            {tab === 'signin' ? 'Sign In to DCU Portal' : 'Activate Leader Account'}
           </h2>
           <p className="text-xs text-gray-600 mt-1">
-            Deliverance Church Utawala Child Dedication Portal
+            Deliverance Church Utawala • Ministry Leadership
           </p>
         </div>
 
-        {/* 2 Simple Tabs: Sign In | Sign Up */}
+        {/* 2 Clean Tabs: Sign In | Activate Invitation */}
         <div className="flex rounded-xl bg-gray-100 p-1 border border-gray-200">
           <button
             type="button"
@@ -281,22 +205,23 @@ export function AuthModal() {
           </button>
           <button
             type="button"
-            onClick={() => { setTab('signup'); setError(''); setSuccessMsg(''); }}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              tab === 'signup'
+            onClick={() => { setTab('invite'); setError(''); setSuccessMsg(''); }}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              tab === 'invite'
                 ? 'bg-[#2a170e] text-[#ffd700] shadow-sm'
                 : 'text-gray-600 hover:text-gray-900'
             }`}
           >
-            Sign Up (Parents)
+            <KeyRound className="w-3.5 h-3.5" />
+            <span>Activate Invitation</span>
           </button>
         </div>
 
         {/* Alert Messages */}
         {error && (
-          <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-            <span className="font-medium">{error}</span>
+          <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+            <span className="font-medium leading-relaxed">{error}</span>
           </div>
         )}
 
@@ -308,40 +233,12 @@ export function AuthModal() {
         )}
 
         {/* ==================================================== */}
-        {/* TAB 1: EASY SIGN IN */}
+        {/* TAB 1: CLEAN SIGN IN (EMAIL OR GOOGLE) */}
         {/* ==================================================== */}
-        {tab === 'signin' && !showInviteDrawer && (
+        {tab === 'signin' && (
           <div className="space-y-4">
             
-            {/* 1. DIRECT 1-CLICK SUPER ADMIN CARD */}
-            <div className="p-3.5 bg-linear-to-r from-amber-50 to-amber-100/60 border-2 border-[#d4af37] rounded-2xl shadow-xs">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-1.5">
-                  <Crown className="w-4 h-4 text-amber-700" />
-                  <span className="text-xs font-extrabold text-[#2a170e] uppercase tracking-wide">
-                    Super Administrator Access
-                  </span>
-                </div>
-                <span className="text-[10px] bg-amber-600 text-white font-bold px-2 py-0.5 rounded-full">
-                  Full Control
-                </span>
-              </div>
-              <p className="text-[11px] text-gray-700 mb-2.5">
-                Instant access for church administrators to compile candidate lists, verify approvals, and manage portal settings.
-              </p>
-              <button
-                type="button"
-                disabled={loading}
-                onClick={handleInstantAdminLogin}
-                className="w-full py-2.5 bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] border border-[#d4af37] font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer hover:scale-[1.01]"
-              >
-                <Sparkles className="w-4 h-4 text-amber-400" />
-                <span>{loading ? 'Signing in...' : '1-Click Super Admin Sign In'}</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* 2. Big Google Button */}
+            {/* Continue with Google */}
             <button
               type="button"
               disabled={loading}
@@ -363,17 +260,12 @@ export function AuthModal() {
               <div className="flex-1 border-t border-gray-200" />
             </div>
 
-            {/* 3. Simple Email & Password Form */}
+            {/* Email & Password Form */}
             <form onSubmit={handleSignIn} className="space-y-3">
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-bold text-gray-700 uppercase">
-                    Email Address
-                  </label>
-                  <span className="text-[10px] text-amber-700 font-semibold bg-amber-50 px-1.5 py-0.5 rounded">
-                    Admin Default: fawany@gmail.com
-                  </span>
-                </div>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                  Email Address
+                </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
                   <input
@@ -381,21 +273,16 @@ export function AuthModal() {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="fawany@gmail.com"
-                    className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden font-medium"
+                    placeholder="leader@dcutawala.org or pastor@dcutawala.org"
+                    className="w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden font-medium"
                   />
                 </div>
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-bold text-gray-700 uppercase">
-                    Password
-                  </label>
-                  <span className="text-[10px] text-gray-500">
-                    Pre-filled: DcuAdmin2026!#
-                  </span>
-                </div>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                  Password
+                </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
                   <input
@@ -403,8 +290,8 @@ export function AuthModal() {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full pl-9 pr-10 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden font-mono"
+                    placeholder="Enter your password"
+                    className="w-full pl-9 pr-10 py-2.5 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden font-mono"
                   />
                   <button
                     type="button"
@@ -420,205 +307,46 @@ export function AuthModal() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-2.5 bg-gray-900 hover:bg-black text-white font-bold rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-2.5 bg-gray-900 hover:bg-black text-white font-bold rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer mt-2"
               >
                 {loading ? 'Signing In...' : 'Sign In with Email'}
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
 
-            {/* 4. EXPANDABLE: REGISTER YOUR OWN EMAIL AS SUPER ADMIN */}
-            <div className="pt-2 border-t border-gray-100">
-              <button
-                type="button"
-                onClick={() => setShowCustomAdminBootstrap(!showCustomAdminBootstrap)}
-                className="w-full text-left flex items-center justify-between text-xs text-amber-900 hover:text-[#2a170e] font-semibold py-1 cursor-pointer"
-              >
-                <span className="flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-amber-600" />
-                  Want to register your personal email as Super Admin?
-                </span>
-                {showCustomAdminBootstrap ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
-
-              {showCustomAdminBootstrap && (
-                <form onSubmit={handleCustomAdminBootstrap} className="mt-2.5 p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-2.5 animate-in fade-in">
-                  <p className="text-[11px] text-gray-600">
-                    Use this form to grant Super Admin rights to your own personal email address immediately:
-                  </p>
-                  <div>
-                    <input
-                      type="email"
-                      required
-                      value={customAdminEmail}
-                      onChange={(e) => setCustomAdminEmail(e.target.value)}
-                      placeholder="your.email@gmail.com"
-                      className="w-full p-2 text-xs border border-gray-300 rounded-lg outline-hidden focus:ring-1 focus:ring-[#d4af37]"
-                    />
-                  </div>
-                  <div>
-                    <input
-                      type="text"
-                      value={customAdminName}
-                      onChange={(e) => setCustomAdminName(e.target.value)}
-                      placeholder="Your Name (Optional)"
-                      className="w-full p-2 text-xs border border-gray-300 rounded-lg outline-hidden focus:ring-1 focus:ring-[#d4af37]"
-                    />
-                  </div>
-                  <div>
-                    <input
-                      type="password"
-                      required
-                      value={customAdminPassword}
-                      onChange={(e) => setCustomAdminPassword(e.target.value)}
-                      placeholder="Create a password (min 8 chars)"
-                      className="w-full p-2 text-xs border border-gray-300 rounded-lg outline-hidden focus:ring-1 focus:ring-[#d4af37]"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full py-2 bg-amber-700 hover:bg-amber-800 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer"
-                  >
-                    {loading ? 'Activating...' : 'Activate My Email as Super Admin'}
-                  </button>
-                </form>
-              )}
-            </div>
-
-            {/* Staff invite link */}
+            {/* Quick link to invite tab */}
             <div className="text-center pt-1">
               <button
                 type="button"
-                onClick={() => { setShowInviteDrawer(true); setError(''); }}
-                className="text-[11px] text-gray-500 hover:text-[#2a170e] hover:underline cursor-pointer"
+                onClick={() => { setTab('invite'); setError(''); }}
+                className="text-xs text-amber-900 hover:text-[#2a170e] font-semibold underline underline-offset-2 cursor-pointer"
               >
-                Have a staff invitation token? Click here
+                Received an invitation token from the Church Office? Activate here
               </button>
             </div>
           </div>
         )}
 
         {/* ==================================================== */}
-        {/* TAB 2: SIMPLE SIGN UP (PARENTS) */}
+        {/* TAB 2: ACTIVATE STAFF / LEADER INVITATION */}
         {/* ==================================================== */}
-        {tab === 'signup' && !showInviteDrawer && (
-          <form onSubmit={handleParentSignUp} className="space-y-3">
-            <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                Your Full Name
-              </label>
-              <div className="relative">
-                <User className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                <input
-                  type="text"
-                  required
-                  value={signupName}
-                  onChange={(e) => setSignupName(e.target.value)}
-                  placeholder="e.g. Mary Wanjiku Kamau"
-                  className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                Email Address
-              </label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                <input
-                  type="email"
-                  required
-                  value={signupEmail}
-                  onChange={(e) => setSignupEmail(e.target.value)}
-                  placeholder="parent@domain.com"
-                  className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                Phone Number (Optional)
-              </label>
-              <div className="relative">
-                <Phone className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                <input
-                  type="tel"
-                  value={signupPhone}
-                  onChange={(e) => setSignupPhone(e.target.value)}
-                  placeholder="0722 000 000"
-                  className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                Password (min 6 characters)
-              </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                <input
-                  type={showSignupPassword ? 'text' : 'password'}
-                  required
-                  value={signupPassword}
-                  onChange={(e) => setSignupPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full pl-9 pr-10 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden font-mono"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowSignupPassword(!showSignupPassword)}
-                  className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-700 cursor-pointer"
-                >
-                  {showSignupPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-2.5 bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] border-2 border-[#d4af37] font-bold rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer mt-4"
-            >
-              {loading ? 'Creating Account...' : 'Register as Parent'}
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </form>
-        )}
-
-        {/* ==================================================== */}
-        {/* OPTIONAL DRAWER: STAFF INVITATION ACTIVATION */}
-        {/* ==================================================== */}
-        {showInviteDrawer && (
+        {tab === 'invite' && (
           <form onSubmit={handleStaffInviteSubmit} className="space-y-3">
-            <div className="flex items-center justify-between pb-1 border-b border-gray-200">
-              <span className="text-xs font-bold text-[#2a170e] flex items-center gap-1.5 uppercase">
-                <KeyRound className="w-4 h-4 text-amber-700" />
-                Staff Invitation Activation
-              </span>
-              <button
-                type="button"
-                onClick={() => { setShowInviteDrawer(false); setError(''); }}
-                className="text-[11px] text-gray-500 hover:text-gray-800 cursor-pointer"
-              >
-                Back to Sign In
-              </button>
+            <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200/60 text-xs text-amber-900 leading-relaxed">
+              <strong>Invited Leaders & Staff:</strong> Enter the invitation token sent to you by the Church Office Super Administrator to set up your password and access your dashboard.
             </div>
 
             <div>
               <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                Single-Use Token
+                Single-Use Invitation Token
               </label>
               <input
                 type="text"
                 required
                 value={inviteToken}
                 onChange={(e) => setInviteToken(e.target.value)}
-                placeholder="Paste invitation token"
-                className="w-full p-2 text-xs border border-gray-300 rounded-xl font-mono focus:ring-2 focus:ring-[#d4af37] outline-hidden"
+                placeholder="e.g. dcu-inv-xxxx-xxxx"
+                className="w-full p-2.5 text-xs sm:text-sm border border-gray-300 rounded-xl font-mono focus:ring-2 focus:ring-[#d4af37] outline-hidden"
               />
             </div>
 
@@ -631,8 +359,8 @@ export function AuthModal() {
                 required
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="staff.email@dcutawala.org"
-                className="w-full p-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
+                placeholder="leader.email@dcutawala.org"
+                className="w-full p-2.5 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
               />
             </div>
 
@@ -644,8 +372,8 @@ export function AuthModal() {
                 type="text"
                 value={inviteName}
                 onChange={(e) => setInviteName(e.target.value)}
-                placeholder="Full Legal Name"
-                className="w-full p-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
+                placeholder="e.g. Deacon John Kamau"
+                className="w-full p-2.5 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
               />
             </div>
 
@@ -653,26 +381,37 @@ export function AuthModal() {
               <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
                 Choose Password (min 6 characters)
               </label>
-              <input
-                type="password"
-                required
-                value={invitePassword}
-                onChange={(e) => setInvitePassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full p-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden font-mono"
-              />
+              <div className="relative">
+                <input
+                  type={showInvitePassword ? 'text' : 'password'}
+                  required
+                  value={invitePassword}
+                  onChange={(e) => setInvitePassword(e.target.value)}
+                  placeholder="Create your secure password"
+                  className="w-full pl-3 pr-10 py-2.5 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowInvitePassword(!showInvitePassword)}
+                  className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-700 cursor-pointer"
+                  title={showInvitePassword ? 'Hide password' : 'Show password'}
+                >
+                  {showInvitePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] border-2 border-[#d4af37] font-bold rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-2.5 bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] border-2 border-[#d4af37] font-bold rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer mt-2"
             >
-              {loading ? 'Activating Staff Account...' : 'Activate Staff Account'}
+              {loading ? 'Activating Account...' : 'Activate Account & Sign In'}
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
         )}
+
       </div>
     </div>
   );

@@ -79,31 +79,31 @@ export const DEDICATION_SCHEDULE_DATES = [
     date: '2026-11-29',
     label: 'Sunday, 29th November 2026',
     cycle: '4th Quarter Dedication Sunday (Every 3 Months)',
-    minister: 'Rev. Senior Pastor & Pastoral Team'
+    minister: 'Rev. Emmanuel K. & Pastoral Team'
   },
   {
     date: '2027-02-28',
     label: 'Sunday, 28th February 2027',
     cycle: '1st Quarter Dedication Sunday (Every 3 Months)',
-    minister: 'Rev. Senior Pastor & Pastoral Team'
+    minister: 'Rev. Emmanuel K. & Pastoral Team'
   },
   {
     date: '2027-05-30',
     label: 'Sunday, 30th May 2027',
     cycle: '2nd Quarter Dedication Sunday (Every 3 Months)',
-    minister: 'Rev. Senior Pastor & Pastoral Team'
+    minister: 'Rev. Emmanuel K. & Pastoral Team'
   },
   {
     date: '2027-08-29',
     label: 'Sunday, 29th August 2027',
     cycle: '3rd Quarter Dedication Sunday (Every 3 Months)',
-    minister: 'Rev. Senior Pastor & Pastoral Team'
+    minister: 'Rev. Emmanuel K. & Pastoral Team'
   },
   {
     date: '2027-11-28',
     label: 'Sunday, 28th November 2027',
     cycle: '4th Quarter Dedication Sunday (Every 3 Months)',
-    minister: 'Rev. Senior Pastor & Pastoral Team'
+    minister: 'Rev. Emmanuel K. & Pastoral Team'
   }
 ];
 
