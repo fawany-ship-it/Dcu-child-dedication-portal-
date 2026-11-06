@@ -1,0 +1,54 @@
+[
+  {
+    "token": "22044029a5731906de09a34981e1156f129dcf0991d27c054b24b323f99f3ebc",
+    "tokenHash": "d3c60ed94130b8a392030c2ef5e1e0323be946450edb94ee201c89ab2b56e9f2",
+    "userId": "usr-parent-1793957855002",
+    "userEmail": "unauthorized.google.1793957854999@gmail.com",
+    "role": "parent",
+    "createdAt": 1793957855004,
+    "expiresAt": 1794044255004,
+    "ip": "127.0.0.1",
+    "userAgent": "node",
+    "requiresMfa": false,
+    "mfaVerified": true
+  },
+  {
+    "token": "f304b9dfa8e4445dc9c267d620f40802fa9a1893b0034368cecbe67552be7a02",
+    "tokenHash": "be7b05b291132271ad81084e077158eac29bccf32f51ee9826371d18cbe51fc9",
+    "userId": "usr-admin-1",
+    "userEmail": "fawany@gmail.com",
+    "role": "super_admin",
+    "createdAt": 1793957855176,
+    "expiresAt": 1794044255176,
+    "ip": "127.0.0.1",
+    "userAgent": "node",
+    "requiresMfa": false,
+    "mfaVerified": true
+  },
+  {
+    "token": "6ca8accb2f37b941fbeb05c7b087f98b74b5f356623b4c01aecf4fa7a26e1cb3",
+    "tokenHash": "33f602f32df4c38b01d9fd02303721fa8c3b867f23498cb904a88e5a2a3e1b0e",
+    "userId": "usr-parent-1793957855262",
+    "userEmail": "test.parent.1793957854962@example.com",
+    "role": "parent",
+    "createdAt": 1793957855264,
+    "expiresAt": 1794044255264,
+    "ip": "127.0.0.1",
+    "userAgent": "node",
+    "requiresMfa": false,
+    "mfaVerified": true
+  },
+  {
+    "token": "73d764536fba3b6acc032e17067afde6e4679fb6ce8195f92d8a390982a71be3",
+    "tokenHash": "cf5b488df7b55f52b691c6d7ed679422878f2db3b48beb94ab82b2f625f53824",
+    "userId": "usr-leader-zoneA",
+    "userEmail": "zoneA.leader@dcutawala.org",
+    "role": "fellowship_leader",
+    "createdAt": 1793957855338,
+    "expiresAt": 1794044255338,
+    "ip": "127.0.0.1",
+    "userAgent": "node",
+    "requiresMfa": false,
+    "mfaVerified": true
+  }
+]
