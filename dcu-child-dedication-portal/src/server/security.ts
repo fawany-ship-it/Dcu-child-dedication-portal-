@@ -320,6 +320,7 @@ export function createInvitation(params: {
   name?: string;
   role: 'super_admin' | 'office_admin' | 'pastor' | 'fellowship_leader';
   assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E';
+  assignedFellowship?: string;
   invitedBy: string;
   invitedByEmail: string;
 }): { invitation: StaffInvitation; rawToken: string } {
@@ -334,7 +335,7 @@ export function createInvitation(params: {
     if (inv.email.toLowerCase() === params.email.toLowerCase() && inv.status === 'pending') {
       inv.status = 'revoked';
       inv.revokedAt = new Date().toISOString();
-      inv.revokedAt = `Superceded by new invitation`;
+      inv.revokedBy = 'Superceded by new invitation';
     }
   });
 
@@ -344,6 +345,7 @@ export function createInvitation(params: {
     name: params.name,
     role: params.role,
     assignedZone: params.assignedZone,
+    assignedFellowship: params.assignedFellowship,
     tokenHash,
     invitedBy: params.invitedBy,
     invitedByEmail: params.invitedByEmail,

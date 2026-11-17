@@ -3,6 +3,7 @@ import { Baby, Users, Church, AlertCircle, CheckCircle2, Calendar, ShieldCheck, 
 import { ZONES, MONTHLY_DEDICATION_DATES, KENYAN_COUNTIES } from '../data/zones';
 import { DedicationRecord } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../services/api';
 
 interface ParentFormProps {
   onSubmitSuccess: (newRecord: DedicationRecord) => void;
@@ -114,22 +115,24 @@ export function ParentForm({ onSubmitSuccess, onNavigateToTracker }: ParentFormP
         submittedBy: user?.email || formData.fatherEmail || formData.motherEmail,
       };
 
-      const res = await fetch('/api/dedications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      const savedRecord = await api.createDedication(payload);
 
-      let savedRecord: DedicationRecord;
-      if (res.ok) {
-        savedRecord = await res.json();
-      } else {
-        savedRecord = {
-          ...payload,
-          id: `DED-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        } as DedicationRecord;
+      // Save to device recent submissions for easy tracking without login
+      try {
+        const stored = JSON.parse(localStorage.getItem('dcu_parent_recent_submissions') || '[]');
+        const updated = [
+          {
+            id: savedRecord.id,
+            childName: savedRecord.childName,
+            submittedAt: savedRecord.createdAt,
+            serviceDate: savedRecord.serviceDate,
+            phone: savedRecord.parentPhone || savedRecord.fatherPhone || savedRecord.motherPhone
+          },
+          ...stored.filter((r: any) => r.id !== savedRecord.id)
+        ].slice(0, 10);
+        localStorage.setItem('dcu_parent_recent_submissions', JSON.stringify(updated));
+      } catch {
+        // localStorage restricted
       }
 
       setSubmittedRecord(savedRecord);
@@ -429,18 +432,18 @@ export function ParentForm({ onSubmitSuccess, onNavigateToTracker }: ParentFormP
           </div>
         </section>
 
-        {/* SECTION 3: HOME FELLOWSHIP ALLOCATION (ZONES A TO E) */}
+        {/* SECTION 3: HOME FELLOWSHIP IN ZONES A–E */}
         <section className="space-y-4">
           <div className="flex items-center space-x-2.5 border-b-2 border-[#d4af37] pb-2">
             <Church className="text-[#aa8222] w-5 h-5" />
             <h2 className="text-lg sm:text-xl font-cinzel font-bold text-[#2a170e]">
-              3. Home Fellowship Allocation (Zones A to E)
+              3. Home Fellowship in Zones A–E
             </h2>
           </div>
 
           <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200">
             <label className="block text-sm font-semibold text-gray-900 mb-3">
-              Are you currently allocated to a Deliverance Church Utawala Home Fellowship?
+              Have you joined the Deliverance Church Utawala Home Fellowship?
             </label>
             <div className="flex flex-wrap gap-6">
               <label className="flex items-center space-x-2 cursor-pointer">

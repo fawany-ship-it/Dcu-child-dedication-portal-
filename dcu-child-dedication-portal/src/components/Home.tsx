@@ -1,6 +1,6 @@
 import React from 'react';
 import { ChurchLogo } from './ChurchLogo';
-import { Baby, Calendar, ShieldCheck, HeartHandshake, ArrowRight, Clock, MapPin, Award, CheckCircle2, Shield } from 'lucide-react';
+import { Baby, Calendar, ShieldCheck, HeartHandshake, ArrowRight, Clock, MapPin, Award, CheckCircle2, Shield, Search, Church } from 'lucide-react';
 import { MONTHLY_DEDICATION_DATES, ZONES } from '../data/zones';
 
 interface HomeProps {
@@ -43,10 +43,10 @@ export function Home({ onNavigate, totalRecordsCount }: HomeProps) {
           </p>
 
           {/* Action buttons */}
-          <div className="pt-2 flex flex-wrap gap-4 items-center">
+          <div className="pt-2 flex flex-wrap gap-3 items-center">
             <button
               onClick={() => onNavigate('register')}
-              className="bg-[#d4af37] hover:bg-[#e6c154] text-[#2a170e] font-bold px-6 py-3.5 rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2 text-sm sm:text-base cursor-pointer group"
+              className="bg-[#d4af37] hover:bg-[#e6c154] text-[#2a170e] font-bold px-5 py-3 rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2 text-sm sm:text-base cursor-pointer group"
             >
               <Baby className="w-5 h-5 text-[#2a170e]" />
               Register Your Child
@@ -55,9 +55,18 @@ export function Home({ onNavigate, totalRecordsCount }: HomeProps) {
 
             <button
               onClick={() => onNavigate('track')}
-              className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-5 py-3.5 rounded-xl text-sm sm:text-base font-semibold transition-all backdrop-blur-xs flex items-center gap-2 cursor-pointer"
+              className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-5 py-3 rounded-xl text-sm sm:text-base font-semibold transition-all backdrop-blur-xs flex items-center gap-2 cursor-pointer"
             >
-              Track Status (24-Hour Review)
+              <Search className="w-4 h-4 text-[#ffd700]" />
+              Track Status
+            </button>
+
+            <button
+              onClick={() => onNavigate('about')}
+              className="bg-transparent hover:bg-white/10 text-gray-200 hover:text-[#ffd700] border border-white/20 px-4 py-3 rounded-xl text-sm font-semibold transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <Church className="w-4 h-4 text-[#ffd700]" />
+              About DCU
             </button>
           </div>
 

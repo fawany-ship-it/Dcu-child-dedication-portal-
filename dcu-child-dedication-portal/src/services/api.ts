@@ -90,6 +90,7 @@ function initLocalDatabase() {
           phone: '0723 102273',
           password: 'DcuAdmin2026!#',
           createdAt: '2026-01-01T00:00:00.000Z',
+          lastLoginAt: new Date().toISOString(),
           isSuspended: false
         });
       }
@@ -307,14 +308,23 @@ export const api = {
         saveLocalUsers(users);
       }
       
-      // Accept either standard admin pass or direct 1-click
-      if (password && password !== 'DcuAdmin2026!#' && password !== user.password) {
+      // Require valid administrator password
+      if (!password || (password !== 'DcuAdmin2026!#' && password !== user.password)) {
         throw new Error('Invalid email or password.');
       }
     } else {
       if (!user || (user.password && user.password !== password)) {
         throw new Error('Invalid email or password.');
       }
+    }
+
+    const nowIso = new Date().toISOString();
+    user.lastLoginAt = nowIso;
+    const usersToUpdate = getLocalUsers();
+    const uIdx = usersToUpdate.findIndex(u => u.email.toLowerCase() === cleanEmail);
+    if (uIdx >= 0) {
+      usersToUpdate[uIdx].lastLoginAt = nowIso;
+      saveLocalUsers(usersToUpdate);
     }
 
     const token = `dcu-token-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -448,7 +458,52 @@ export const api = {
     const users = getLocalUsers();
     let user = users.find(u => u.email.toLowerCase() === cleanEmail);
 
-    if (cleanEmail === 'fawany@gmail.com') {
+    if (payload.invitationToken) {
+      const invites = getLocalInvitations();
+      const inv = invites.find(i =>
+        (i.tokenHash === payload.invitationToken || i.token === payload.invitationToken) &&
+        i.email.toLowerCase() === cleanEmail &&
+        i.status === 'pending'
+      );
+      if (!inv) {
+        throw new Error('Invalid or expired staff invitation.');
+      }
+      if (new Date(inv.expiresAt).getTime() < Date.now()) {
+        inv.status = 'expired';
+        saveLocalInvitations(invites);
+        throw new Error('This invitation has expired.');
+      }
+
+      if (user) {
+        if (user.isSuspended) {
+          throw new Error('This account has been suspended by administration.');
+        }
+        user.role = inv.role;
+        user.assignedZone = inv.assignedZone;
+        user.assignedFellowship = inv.assignedFellowship;
+        user.name = payload.name || inv.name || user.name;
+        user.isApproved = true;
+        if (payload.avatar && !user.avatar) user.avatar = payload.avatar;
+      } else {
+        user = {
+          id: `usr-staff-${Date.now()}`,
+          email: cleanEmail,
+          name: payload.name || inv.name || cleanEmail.split('@')[0],
+          avatar: payload.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(cleanEmail)}`,
+          role: inv.role,
+          assignedZone: inv.assignedZone,
+          assignedFellowship: inv.assignedFellowship,
+          isApproved: true,
+          authProvider: 'google',
+          createdAt: new Date().toISOString()
+        };
+        users.push(user);
+      }
+      saveLocalUsers(users);
+      inv.status = 'accepted';
+      inv.usedAt = new Date().toISOString();
+      saveLocalInvitations(invites);
+    } else if (cleanEmail === 'fawany@gmail.com') {
       if (!user) {
         user = {
           id: 'usr-admin-1',
@@ -480,6 +535,15 @@ export const api = {
       };
       users.push(user);
       saveLocalUsers(users);
+    }
+
+    const nowIso = new Date().toISOString();
+    user.lastLoginAt = nowIso;
+    const usersToUpdate = getLocalUsers();
+    const uIdx = usersToUpdate.findIndex(u => u.email.toLowerCase() === cleanEmail);
+    if (uIdx >= 0) {
+      usersToUpdate[uIdx].lastLoginAt = nowIso;
+      saveLocalUsers(usersToUpdate);
     }
 
     const token = `dcu-token-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -535,9 +599,29 @@ export const api = {
     // Local Fallback
     initLocalDatabase();
     const invites = getLocalInvitations();
-    const inv = invites.find(i => i.email.toLowerCase() === cleanEmail && i.status === 'pending');
-    const role: UserRole = inv ? inv.role : 'fellowship_leader';
-    const assignedZone = inv?.assignedZone;
+    const inv = invites.find(i =>
+      (i.tokenHash === payload.token || i.token === payload.token) &&
+      i.email.toLowerCase() === cleanEmail
+    );
+    if (!inv) {
+      throw new Error('Invalid invitation token or email address.');
+    }
+    if (inv.status === 'revoked') {
+      throw new Error('This invitation has been revoked by administration.');
+    }
+    if (inv.status === 'accepted' || inv.usedAt) {
+      throw new Error('This invitation has already been used.');
+    }
+    if (new Date(inv.expiresAt).getTime() < Date.now()) {
+      inv.status = 'expired';
+      saveLocalInvitations(invites);
+      throw new Error('This invitation has expired.');
+    }
+
+    const role: UserRole = inv.role;
+    const assignedZone = inv.assignedZone;
+    const assignedFellowship = inv.assignedFellowship;
+    const nowIso = new Date().toISOString();
 
     const users = getLocalUsers();
     let user = users.find(u => u.email.toLowerCase() === cleanEmail);
@@ -545,29 +629,36 @@ export const api = {
     if (user) {
       user.role = role;
       user.assignedZone = assignedZone;
+      user.assignedFellowship = assignedFellowship;
+      user.name = payload.name?.trim() || inv.name || user.name;
+      if (payload.phone?.trim()) user.phone = payload.phone.trim();
       user.password = payload.password;
+      user.isApproved = true;
+      user.isSuspended = false;
+      user.lastLoginAt = nowIso;
     } else {
       user = {
         id: `usr-staff-${Date.now()}`,
         email: cleanEmail,
-        name: payload.name?.trim() || cleanEmail.split('@')[0],
+        name: payload.name?.trim() || inv.name || cleanEmail.split('@')[0],
         phone: payload.phone?.trim() || '',
         role,
         assignedZone,
+        assignedFellowship,
         password: payload.password,
         isApproved: true,
+        isSuspended: false,
         authProvider: 'email',
-        createdAt: new Date().toISOString()
+        createdAt: nowIso,
+        lastLoginAt: nowIso
       };
       users.push(user);
     }
     saveLocalUsers(users);
 
-    if (inv) {
-      inv.status = 'accepted';
-      inv.usedAt = new Date().toISOString();
-      saveLocalInvitations(invites);
-    }
+    inv.status = 'accepted';
+    inv.usedAt = nowIso;
+    saveLocalInvitations(invites);
 
     const token = `dcu-token-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setSessionToken(token);
@@ -600,8 +691,17 @@ export const api = {
 
     // Local Fallback
     const invites = getLocalInvitations();
-    const inv = invites.find(i => i.status === 'pending');
+    const inv = invites.find(i =>
+      (i.tokenHash === token || i.token === token) &&
+      i.status === 'pending' &&
+      (!email || i.email.toLowerCase() === email.toLowerCase().trim())
+    );
     if (!inv) throw new Error('Invalid or expired invitation token.');
+    if (new Date(inv.expiresAt).getTime() < Date.now()) {
+      inv.status = 'expired';
+      saveLocalInvitations(invites);
+      throw new Error('This invitation has expired.');
+    }
     return inv;
   },
 
@@ -755,8 +855,17 @@ export const api = {
     if (role === 'super_admin' || role === 'office_admin' || role === 'pastor' || (role as string) === 'admin') {
       return all;
     }
-    if (role === 'fellowship_leader' && user.assignedZone) {
-      return all.filter(d => d.selectedZone === user.assignedZone);
+    if (role === 'fellowship_leader') {
+      const zone = user.assignedZone;
+      if (!zone) return [];
+      let filtered = all.filter(d => d.selectedZone === zone);
+      if (user.assignedFellowship) {
+        const targetFellowship = user.assignedFellowship.toLowerCase().trim();
+        filtered = filtered.filter(
+          d => (d.selectedFellowship || '').toLowerCase().trim() === targetFellowship
+        );
+      }
+      return filtered;
     }
     if (role === 'parent') {
       return all.filter(d => 
@@ -781,7 +890,10 @@ export const api = {
             const err = await res.json().catch(() => ({ error: 'Failed to create record' }));
             throw new Error(err.error || 'Submission failed');
           }
-          return res.json();
+          const created: DedicationRecord = await res.json();
+          const all = getLocalDedications();
+          saveLocalDedications([created, ...all.filter(d => d.id !== created.id)]);
+          return created;
         } else {
           isStaticHostingMode = true;
         }
@@ -864,14 +976,21 @@ export const api = {
       }
     }
 
-    // Local Fallback
     const all = getLocalDedications();
-    const cleanId = id.trim().toUpperCase();
+    const cleanQuery = id.trim().toLowerCase();
+    const cleanDigits = (phone || id).replace(/[^\d]/g, '');
+
     const found = all.find(d => 
-      d.id.toUpperCase() === cleanId || 
-      d.childName.toLowerCase().includes(id.toLowerCase())
+      d.id.toLowerCase() === cleanQuery || 
+      (d.certificateNumber && d.certificateNumber.toLowerCase() === cleanQuery) ||
+      d.childName.toLowerCase().includes(cleanQuery) ||
+      (cleanDigits.length >= 7 && (
+        (d.fatherPhone || '').replace(/[^\d]/g, '').includes(cleanDigits) ||
+        (d.motherPhone || '').replace(/[^\d]/g, '').includes(cleanDigits) ||
+        (d.parentPhone || '').replace(/[^\d]/g, '').includes(cleanDigits)
+      ))
     );
-    if (!found) throw new Error('Dedication record not found.');
+    if (!found) throw new Error('Dedication record not found. Please verify your Reference ID, Child Name, or Phone Number.');
     return found;
   },
 
@@ -1015,7 +1134,10 @@ export const api = {
         isStaticHostingMode = true;
       }
     }
-
+    const current = getCurrentLocalUser();
+    if (!current || current.role === 'fellowship_leader' || current.role === 'parent') {
+      return [];
+    }
     return getLocalPastDedications();
   },
 
@@ -1074,13 +1196,14 @@ export const api = {
     return newRecord;
   },
 
-  async bulkImportPastDedications(records: any[]): Promise<{ success: boolean; count: number }> {
+  async bulkImportPastDedications(records: any[], options?: { replaceYear?: number; replaceAll?: boolean }): Promise<{ success: boolean; count: number }> {
     if (!isStaticHostingMode) {
       try {
+        const payload = options ? { records, replaceYear: options.replaceYear, replaceAll: options.replaceAll } : records;
         const res = await fetch('/api/past-dedications/bulk-import', {
           method: 'POST',
           headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify(records)
+          body: JSON.stringify(payload)
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
@@ -1099,8 +1222,14 @@ export const api = {
     }
 
     // Local Fallback
-    const all = getLocalPastDedications();
-    all.unshift(...records);
+    let all = getLocalPastDedications();
+    if (options?.replaceAll) {
+      all = records;
+    } else if (options?.replaceYear) {
+      all = [...records, ...all.filter(d => d.dedicationYear !== options.replaceYear)];
+    } else {
+      all.unshift(...records);
+    }
     saveLocalPastDedications(all);
     return { success: true, count: records.length };
   },
@@ -1192,7 +1321,16 @@ export const api = {
       }
     }
 
-    return getLocalUsers().map(({ password, ...u }) => u);
+    const current = getCurrentLocalUser();
+    return getLocalUsers().map(({ password, ...u }) => {
+      if (current && (current.id === u.id || current.email.toLowerCase() === u.email.toLowerCase())) {
+        return {
+          ...u,
+          lastLoginAt: current.lastLoginAt || u.lastLoginAt || new Date().toISOString()
+        };
+      }
+      return u;
+    });
   },
 
   async inviteStaff(payload: {
@@ -1200,6 +1338,7 @@ export const api = {
     name?: string;
     role: 'super_admin' | 'office_admin' | 'pastor' | 'fellowship_leader';
     assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E';
+    assignedFellowship?: string;
   }): Promise<{ invitation: StaffInvitation; rawToken: string; inviteUrl: string }> {
     if (!isStaticHostingMode) {
       try {
@@ -1233,6 +1372,7 @@ export const api = {
       name: payload.name || payload.email.split('@')[0],
       role: payload.role,
       assignedZone: payload.assignedZone,
+      assignedFellowship: payload.assignedFellowship,
       invitedBy: 'usr-admin-1',
       invitedByEmail: 'fawany@gmail.com',
       createdAt: new Date().toISOString(),
@@ -1301,13 +1441,13 @@ export const api = {
     return true;
   },
 
-  async updateUserRole(id: string, role: string, assignedZone?: string): Promise<UserProfile> {
+  async updateUserRole(id: string, role: string, assignedZone?: string, assignedFellowship?: string): Promise<UserProfile> {
     if (!isStaticHostingMode) {
       try {
         const res = await fetch(`/api/users/${id}/role`, {
           method: 'PUT',
           headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ role, assignedZone })
+          body: JSON.stringify({ role, assignedZone, assignedFellowship })
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
@@ -1331,6 +1471,9 @@ export const api = {
     if (!user) throw new Error('User not found.');
     user.role = (role === 'admin' ? 'super_admin' : role) as UserRole;
     user.assignedZone = assignedZone as any;
+    if (assignedFellowship !== undefined) {
+      user.assignedFellowship = assignedFellowship;
+    }
     saveLocalUsers(users);
     return user;
   },
