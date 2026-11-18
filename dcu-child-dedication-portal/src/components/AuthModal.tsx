@@ -74,6 +74,7 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
   } | null>(null);
 
   const [error, setError] = useState('');
+  const [inviteVerifyError, setInviteVerifyError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -105,6 +106,7 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
     const cleanToken = inviteToken.trim();
     if (!isAuthModalOpen || cleanToken.length < 8) {
       setVerifiedInvite(null);
+      setInviteVerifyError('');
       return;
     }
 
@@ -114,6 +116,7 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
         const inv = await api.verifyInvitation(cleanToken);
         if (cancelled) return;
         setVerifiedInvite(inv);
+        setInviteVerifyError('');
         if (inv.email) {
           setInviteEmail((prev) => prev || inv.email);
           setEmail((prev) => prev || inv.email);
@@ -121,9 +124,16 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
         if (inv.name) {
           setInviteName((prev) => prev || inv.name);
         }
-      } catch {
+      } catch (err: any) {
         if (!cancelled) {
           setVerifiedInvite(null);
+          if (cleanToken.startsWith('INV-')) {
+            setInviteVerifyError(
+              'This offline/browser-only invitation token (INV-...) was generated locally without a server connection and cannot be verified across devices. Please ask the Super Administrator to generate and send a fresh invitation link.'
+            );
+          } else {
+            setInviteVerifyError(err?.message || 'Invalid, expired, or already used invitation token.');
+          }
         }
       }
     }, 200);
@@ -275,7 +285,7 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
         <div className="flex rounded-xl bg-gray-100 p-1 border border-gray-200">
           <button
             type="button"
-            onClick={() => { setTab('signin'); setError(''); setSuccessMsg(''); }}
+            onClick={() => { setTab('signin'); setError(''); setInviteVerifyError(''); setSuccessMsg(''); }}
             className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
               tab === 'signin'
                 ? 'bg-[#2a170e] text-[#ffd700] shadow-sm'
@@ -435,6 +445,13 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
                     </strong>
                   </p>
                 )}
+              </div>
+            )}
+
+            {!verifiedInvite && inviteVerifyError && !error && (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                <span className="font-medium leading-relaxed">{inviteVerifyError}</span>
               </div>
             )}
 

@@ -252,6 +252,7 @@ export const api = {
     const cleanEmail = email.toLowerCase().trim();
 
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/auth/login', {
           method: 'POST',
@@ -261,6 +262,7 @@ export const api = {
 
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Invalid credentials' }));
             throw new Error(err.error || 'Invalid credentials');
@@ -270,17 +272,12 @@ export const api = {
           setCurrentLocalUser(data.user);
           return data;
         } else {
-          // Received HTML (Vercel static rewrite) - switch to local mode
+          // Received HTML (pure static SPA rewrite) - switch to local mode
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token') && !err.message.includes('Invalid credentials')) {
-          isStaticHostingMode = true;
-        } else if (err.message && err.message.includes('Invalid credentials')) {
-          throw err;
-        } else {
-          isStaticHostingMode = true;
-        }
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to reach the authentication server. Please try again.');
       }
     }
 
@@ -351,6 +348,7 @@ export const api = {
     const cleanEmail = data.email.toLowerCase().trim();
 
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/auth/register', {
           method: 'POST',
@@ -359,6 +357,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Registration failed' }));
             throw new Error(err.error || 'Registration failed');
@@ -371,8 +370,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to reach the server. Please try again.');
       }
     }
 
@@ -422,15 +421,19 @@ export const api = {
   }): Promise<{ user: UserProfile; token: string }> {
     const cleanEmail = payload.email.toLowerCase().trim();
 
+    const cleanInviteToken = payload.invitationToken?.trim() || undefined;
+
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/auth/google', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...payload, email: cleanEmail })
+          body: JSON.stringify({ ...payload, email: cleanEmail, invitationToken: cleanInviteToken })
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Google authentication failed' }));
             throw new Error(err.error || 'Google authentication failed');
@@ -443,25 +446,20 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token') && !err.message.includes('Google authentication failed')) {
-          isStaticHostingMode = true;
-        } else if (err.message && err.message.includes('Google authentication failed')) {
-          isStaticHostingMode = true; // Fallback to local on Vercel
-        } else {
-          isStaticHostingMode = true;
-        }
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to reach the authentication server. Please try again.');
       }
     }
 
-    // Local Fallback
+    // Local Fallback (pure static hosting only)
     initLocalDatabase();
     const users = getLocalUsers();
     let user = users.find(u => u.email.toLowerCase() === cleanEmail);
 
-    if (payload.invitationToken) {
+    if (cleanInviteToken) {
       const invites = getLocalInvitations();
       const inv = invites.find(i =>
-        (i.tokenHash === payload.invitationToken || i.token === payload.invitationToken) &&
+        (i.tokenHash === cleanInviteToken || i.token === cleanInviteToken) &&
         i.email.toLowerCase() === cleanEmail &&
         i.status === 'pending'
       );
@@ -569,16 +567,19 @@ export const api = {
     phone?: string;
   }): Promise<{ user: UserProfile; token: string }> {
     const cleanEmail = payload.email.toLowerCase().trim();
+    const cleanToken = payload.token.trim();
 
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/auth/accept-invitation', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...payload, email: cleanEmail })
+          body: JSON.stringify({ ...payload, token: cleanToken, email: cleanEmail })
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to accept invitation' }));
             throw new Error(err.error || 'Failed to accept invitation');
@@ -591,16 +592,16 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to reach the server to verify your invitation. Please try again.');
       }
     }
 
-    // Local Fallback
+    // Local Fallback (pure static hosting only)
     initLocalDatabase();
     const invites = getLocalInvitations();
     const inv = invites.find(i =>
-      (i.tokenHash === payload.token || i.token === payload.token) &&
+      (i.tokenHash === cleanToken || i.token === cleanToken) &&
       i.email.toLowerCase() === cleanEmail
     );
     if (!inv) {
@@ -668,13 +669,18 @@ export const api = {
   },
 
   async verifyInvitation(token: string, email?: string): Promise<any> {
+    const cleanToken = token.trim();
+    const cleanEmail = email?.trim();
+
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
-        const query = new URLSearchParams({ token });
-        if (email) query.set('email', email);
+        const query = new URLSearchParams({ token: cleanToken });
+        if (cleanEmail) query.set('email', cleanEmail);
         const res = await fetch(`/api/auth/verify-invitation?${query.toString()}`);
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Invalid invitation' }));
             throw new Error(err.error || 'Invalid invitation');
@@ -684,17 +690,17 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to verify invitation right now.');
       }
     }
 
-    // Local Fallback
+    // Local Fallback (pure static hosting only)
     const invites = getLocalInvitations();
     const inv = invites.find(i =>
-      (i.tokenHash === token || i.token === token) &&
+      (i.tokenHash === cleanToken || i.token === cleanToken) &&
       i.status === 'pending' &&
-      (!email || i.email.toLowerCase() === email.toLowerCase().trim())
+      (!cleanEmail || i.email.toLowerCase() === cleanEmail.toLowerCase())
     );
     if (!inv) throw new Error('Invalid or expired invitation token.');
     if (new Date(inv.expiresAt).getTime() < Date.now()) {
@@ -709,20 +715,27 @@ export const api = {
     const currentLocal = getCurrentLocalUser();
 
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/auth/me', {
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
-          if (!res.ok) throw new Error('Not authenticated');
+          receivedJson = true;
+          if (!res.ok) {
+            setSessionToken(null);
+            setCurrentLocalUser(null);
+            throw new Error('Not authenticated');
+          }
           const data = await res.json();
           setCurrentLocalUser(data);
           return data;
         } else {
           isStaticHostingMode = true;
         }
-      } catch (err: any) {
+      } catch {
+        if (receivedJson) throw new Error('Not authenticated');
         if (currentLocal) return currentLocal;
         throw new Error('Not authenticated');
       }
@@ -755,6 +768,7 @@ export const api = {
     const cleanEmail = payload.email.toLowerCase().trim();
 
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/security/bootstrap-admin', {
           method: 'POST',
@@ -763,6 +777,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Bootstrap failed' }));
             throw new Error(err.error || 'Bootstrap failed');
@@ -775,8 +790,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to reach the server.');
       }
     }
 
@@ -825,14 +840,16 @@ export const api = {
 
   async getDedications(): Promise<DedicationRecord[]> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/dedications', {
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
-            if (res.status === 401) return [];
+            if (res.status === 401 || res.status === 403) return [];
             throw new Error(`Failed to fetch dedications (${res.status})`);
           }
           const list = await res.json();
@@ -841,8 +858,9 @@ export const api = {
         } else {
           isStaticHostingMode = true;
         }
-      } catch {
-        isStaticHostingMode = true;
+      } catch (err: any) {
+        if (receivedJson) throw err;
+        return [];
       }
     }
 
@@ -878,6 +896,7 @@ export const api = {
 
   async createDedication(record: Partial<DedicationRecord>): Promise<DedicationRecord> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/dedications', {
           method: 'POST',
@@ -886,6 +905,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to create record' }));
             throw new Error(err.error || 'Submission failed');
@@ -898,8 +918,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to submit registration right now. Please try again.');
       }
     }
 
@@ -956,12 +976,14 @@ export const api = {
 
   async trackDedication(id: string, phone?: string): Promise<any> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const query = new URLSearchParams({ id });
         if (phone) query.set('phone', phone);
         const res = await fetch(`/api/dedications/track?${query.toString()}`);
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Tracking failed' }));
             throw new Error(err.error || 'Record not found');
@@ -971,8 +993,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to track dedication right now.');
       }
     }
 
@@ -996,6 +1018,7 @@ export const api = {
 
   async updateDedication(id: string, updates: Partial<DedicationRecord>): Promise<DedicationRecord> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/dedications/${id}`, {
           method: 'PUT',
@@ -1004,6 +1027,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Update failed' }));
             throw new Error(err.error || 'Failed to update record');
@@ -1013,8 +1037,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to update dedication right now.');
       }
     }
 
@@ -1042,6 +1066,7 @@ export const api = {
 
   async deleteDedication(id: string): Promise<boolean> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/dedications/${id}`, {
           method: 'DELETE',
@@ -1049,6 +1074,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Delete failed' }));
             throw new Error(err.error || 'Failed to delete record');
@@ -1058,8 +1084,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to delete dedication right now.');
       }
     }
 
@@ -1079,6 +1105,7 @@ export const api = {
 
   async bulkImport(records: any[]): Promise<{ count: number; total: number }> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/dedications/bulk-import', {
           method: 'POST',
@@ -1087,6 +1114,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Bulk import failed' }));
             throw new Error(err.error || 'Bulk import failed');
@@ -1096,8 +1124,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to import records right now.');
       }
     }
 
@@ -1114,12 +1142,14 @@ export const api = {
 
   async getPastDedications(): Promise<PastDedicationRecord[]> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/past-dedications', {
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             if (res.status === 401 || res.status === 403) return [];
             throw new Error('Failed to load past dedications');
@@ -1131,7 +1161,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch {
-        isStaticHostingMode = true;
+        if (receivedJson) return [];
+        return [];
       }
     }
     const current = getCurrentLocalUser();
@@ -1143,6 +1174,7 @@ export const api = {
 
   async createPastDedication(record: Partial<PastDedicationRecord>): Promise<PastDedicationRecord> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/past-dedications', {
           method: 'POST',
@@ -1151,6 +1183,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to create past record' }));
             throw new Error(err.error || 'Failed to create past record');
@@ -1160,8 +1193,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to save archive record right now.');
       }
     }
 
@@ -1198,6 +1231,7 @@ export const api = {
 
   async bulkImportPastDedications(records: any[], options?: { replaceYear?: number; replaceAll?: boolean }): Promise<{ success: boolean; count: number }> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const payload = options ? { records, replaceYear: options.replaceYear, replaceAll: options.replaceAll } : records;
         const res = await fetch('/api/past-dedications/bulk-import', {
@@ -1207,6 +1241,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Bulk import failed' }));
             throw new Error(err.error || 'Bulk import failed');
@@ -1216,8 +1251,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to bulk import past dedications right now.');
       }
     }
 
@@ -1236,6 +1271,7 @@ export const api = {
 
   async updatePastDedication(id: string, updates: Partial<PastDedicationRecord>): Promise<PastDedicationRecord> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/past-dedications/${id}`, {
           method: 'PUT',
@@ -1244,6 +1280,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to update record' }));
             throw new Error(err.error || 'Failed to update record');
@@ -1253,8 +1290,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to update archive record right now.');
       }
     }
 
@@ -1269,6 +1306,7 @@ export const api = {
 
   async deletePastDedication(id: string): Promise<boolean> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/past-dedications/${id}`, {
           method: 'DELETE',
@@ -1276,6 +1314,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Delete failed' }));
             throw new Error(err.error || 'Delete failed');
@@ -1285,8 +1324,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to delete archive record right now.');
       }
     }
 
@@ -1303,12 +1342,14 @@ export const api = {
 
   async getUsers(): Promise<UserProfile[]> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/users', {
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) return [];
           const users = await res.json();
           saveLocalUsers(users);
@@ -1317,7 +1358,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch {
-        isStaticHostingMode = true;
+        if (receivedJson) return [];
+        return [];
       }
     }
 
@@ -1341,6 +1383,7 @@ export const api = {
     assignedFellowship?: string;
   }): Promise<{ invitation: StaffInvitation; rawToken: string; inviteUrl: string }> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/users/invite', {
           method: 'POST',
@@ -1349,6 +1392,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to issue invitation' }));
             throw new Error(err.error || 'Failed to issue invitation');
@@ -1358,12 +1402,12 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to reach the server to issue invitation. Please try again.');
       }
     }
 
-    // Local Fallback
+    // Local Fallback (pure static hosting only)
     const token = `INV-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
     const inv: StaffInvitation = {
       id: `inv-${Date.now()}`,
@@ -1392,19 +1436,22 @@ export const api = {
 
   async getInvitations(): Promise<StaffInvitation[]> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/invitations', {
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) return [];
           return res.json();
         } else {
           isStaticHostingMode = true;
         }
       } catch {
-        isStaticHostingMode = true;
+        if (receivedJson) return [];
+        return [];
       }
     }
 
@@ -1413,6 +1460,7 @@ export const api = {
 
   async revokeInvitation(id: string): Promise<boolean> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/invitations/${id}/revoke`, {
           method: 'POST',
@@ -1420,6 +1468,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to revoke' }));
             throw new Error(err.error || 'Failed to revoke');
@@ -1429,8 +1478,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to revoke invitation right now.');
       }
     }
 
@@ -1443,6 +1492,7 @@ export const api = {
 
   async updateUserRole(id: string, role: string, assignedZone?: string, assignedFellowship?: string): Promise<UserProfile> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/users/${id}/role`, {
           method: 'PUT',
@@ -1451,6 +1501,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to update user role' }));
             throw new Error(err.error || 'Failed to update user role');
@@ -1460,8 +1511,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to update user role right now.');
       }
     }
 
@@ -1480,6 +1531,7 @@ export const api = {
 
   async updateUserStatus(id: string, isSuspended: boolean): Promise<UserProfile> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/users/${id}/status`, {
           method: 'PUT',
@@ -1488,6 +1540,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to update user status' }));
             throw new Error(err.error || 'Failed to update user status');
@@ -1497,8 +1550,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to update user status right now.');
       }
     }
 
@@ -1513,6 +1566,7 @@ export const api = {
 
   async deleteUser(id: string): Promise<boolean> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/users/${id}`, {
           method: 'DELETE',
@@ -1520,6 +1574,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to delete user' }));
             throw new Error(err.error || 'Failed to delete user');
@@ -1529,8 +1584,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to delete user right now.');
       }
     }
 
@@ -1547,19 +1602,22 @@ export const api = {
 
   async getAuditLogs(): Promise<AuditLog[]> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/audit-logs', {
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) return [];
           return res.json();
         } else {
           isStaticHostingMode = true;
         }
       } catch {
-        isStaticHostingMode = true;
+        if (receivedJson) return [];
+        return [];
       }
     }
 

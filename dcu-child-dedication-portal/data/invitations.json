@@ -1,5 +1,33 @@
 [
   {
+    "id": "inv-1794999372590-03f344",
+    "email": "staff.to.suspend.1794999372586@example.com",
+    "name": "Staff To Suspend",
+    "role": "fellowship_leader",
+    "assignedZone": "Zone C",
+    "tokenHash": "bee6ce92c77e1d44d33c7f4750224b92c5a6e2330ee38c950f944301bf6d886a",
+    "invitedBy": "usr-admin-1",
+    "invitedByEmail": "fawany@gmail.com",
+    "createdAt": "2026-11-18T10:56:12.590Z",
+    "expiresAt": "2026-11-25T10:56:12.590Z",
+    "status": "accepted",
+    "usedAt": "2026-11-18T10:56:12.660Z"
+  },
+  {
+    "id": "inv-1794999372573-a540b5",
+    "email": "invited.pastor.1794999372569@example.com",
+    "name": "Pastor Candidate",
+    "role": "pastor",
+    "tokenHash": "569d75637f1b40d53ed6d1bf426c096694c82c0009bad1818b0456e20c5eed87",
+    "invitedBy": "usr-admin-1",
+    "invitedByEmail": "fawany@gmail.com",
+    "createdAt": "2026-11-18T10:56:12.573Z",
+    "expiresAt": "2026-11-25T10:56:12.573Z",
+    "status": "revoked",
+    "revokedAt": "2026-11-18T10:56:12.579Z",
+    "revokedBy": "usr-admin-1"
+  },
+  {
     "id": "inv-1794900055654-24e731",
     "email": "verify.goshen.1794900055650@dcutawala.org",
     "name": "Pastor Goshen",

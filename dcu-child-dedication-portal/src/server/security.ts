@@ -361,8 +361,10 @@ export function createInvitation(params: {
 }
 
 export function verifyInvitation(rawToken: string, userEmail: string): { valid: boolean; reason?: string; invitation?: StaffInvitation } {
-  if (!rawToken) return { valid: false, reason: 'Invitation token is missing' };
-  const tokenHash = hashToken(rawToken);
+  const cleanToken = (rawToken || '').trim();
+  const cleanEmail = (userEmail || '').trim();
+  if (!cleanToken) return { valid: false, reason: 'Invitation token is missing' };
+  const tokenHash = hashToken(cleanToken);
   const invites = loadInvitations();
   const invitation = invites.find(inv => inv.tokenHash === tokenHash);
 
@@ -384,10 +386,10 @@ export function verifyInvitation(rawToken: string, userEmail: string): { valid: 
     return { valid: false, reason: 'This invitation has expired' };
   }
 
-  if (invitation.email.toLowerCase() !== userEmail.toLowerCase()) {
+  if (invitation.email.toLowerCase() !== cleanEmail.toLowerCase()) {
     return { 
       valid: false, 
-      reason: `Invitation is restricted to email: ${invitation.email}. Authenticated email (${userEmail}) does not match.` 
+      reason: `Invitation is restricted to email: ${invitation.email}. Authenticated email (${cleanEmail}) does not match.` 
     };
   }
 
