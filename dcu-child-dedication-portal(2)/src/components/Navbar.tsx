@@ -39,13 +39,14 @@ export function Navbar({
     { id: 'track', label: 'Track Status' }
   ];
 
-  // 2. FELLOWSHIP LEADER: ONLY their specific zone confirmation tab
+  // 2. FELLOWSHIP LEADER: ONLY their specific zone & micro church fellowship confirmation tab
   // Strict rule: Fellowship leaders NEVER see Office Compile, Data Lists, or Past Data List
   if (isFellowshipLeader) {
-    const zoneName = user.assignedZone || 'Fellowship';
+    const zoneLabel = user.assignedZone || 'Fellowship';
+    const fellowshipLabel = user.assignedFellowship ? ` (${user.assignedFellowship})` : '';
     navTabs.push({
       id: 'leadership',
-      label: `${zoneName} Confirmations`,
+      label: `${zoneLabel}${fellowshipLabel} Confirmations`,
       badge: pendingLeadershipCount > 0 ? pendingLeadershipCount : undefined
     });
   }
@@ -162,9 +163,9 @@ export function Navbar({
                   <p className="text-xs font-bold text-white leading-tight">
                     {user.name.length > 18 ? user.name.slice(0, 18) + '...' : user.name}
                   </p>
-                  <p className="text-[10px] text-[#ffd700] font-semibold uppercase tracking-wider">
+                  <p className="text-[10px] text-[#ffd700] font-semibold uppercase tracking-wider leading-tight">
                     {user.role === 'fellowship_leader' 
-                      ? (user.assignedZone ? `${user.assignedZone} Leader` : 'Zone Leader') 
+                      ? 'Fellowship Leader'
                       : user.role === 'super_admin' || user.role === 'admin'
                       ? 'Super Administrator'
                       : user.role === 'office_admin'
@@ -173,6 +174,13 @@ export function Navbar({
                       ? 'Pastor' 
                       : String(user.role).replace('_', ' ')}
                   </p>
+                  {(user.assignedZone || user.assignedFellowship) && (
+                    <p className="text-[10px] text-amber-200/90 font-medium leading-tight">
+                      {[user.assignedZone, user.assignedFellowship ? `${user.assignedFellowship}` : '']
+                        .filter(Boolean)
+                        .join(' • ')}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={(e) => {

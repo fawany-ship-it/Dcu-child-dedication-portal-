@@ -3,20 +3,44 @@ import { ChurchLogo } from './ChurchLogo';
 import { 
   Mail, 
   Lock, 
-  Shield, 
   CheckCircle2, 
   AlertCircle, 
-  User, 
   ArrowRight, 
   KeyRound, 
   Eye, 
   EyeOff, 
-  Sparkles
+  MapPin
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../services/api';
 
 interface AuthModalProps {
   onNavigate?: (tab: string) => void;
+}
+
+function formatRoleTitle(role: string): string {
+  switch (role) {
+    case 'super_admin':
+    case 'admin':
+      return 'Super Administrator';
+    case 'office_admin':
+      return 'Church Office Admin';
+    case 'pastor':
+      return 'Pastor';
+    case 'fellowship_leader':
+      return 'Fellowship Leader';
+    default:
+      return role.replace('_', ' ');
+  }
+}
+
+function formatPlacement(assignedZone?: string, assignedFellowship?: string): string {
+  return [
+    assignedZone || '',
+    assignedFellowship ? `${assignedFellowship} Fellowship` : ''
+  ]
+    .filter(Boolean)
+    .join(' • ');
 }
 
 export function AuthModal({ onNavigate }: AuthModalProps) {
@@ -41,10 +65,24 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
   const [invitePassword, setInvitePassword] = useState('');
   const [showInvitePassword, setShowInvitePassword] = useState(false);
   const [inviteName, setInviteName] = useState('');
+  const [verifiedInvite, setVerifiedInvite] = useState<{
+    email: string;
+    name?: string;
+    role: string;
+    assignedZone?: string;
+    assignedFellowship?: string;
+  } | null>(null);
 
   const [error, setError] = useState('');
+  const [inviteVerifyError, setInviteVerifyError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const clearInviteQueryParams = () => {
+    if (typeof window !== 'undefined' && window.location.search.includes('invite=')) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  };
 
   // Auto-detect invitation tokens in URL (?invite=...&email=...)
   useEffect(() => {
@@ -55,10 +93,56 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
       if (token) {
         setTab('invite');
         setInviteToken(token);
-        if (em) setInviteEmail(em);
+        if (em) {
+          setInviteEmail(em);
+          setEmail((prev) => prev || em);
+        }
       }
     }
   }, [isAuthModalOpen]);
+
+  // Verify invitation token to show exact Zone & Micro Church Fellowship placement
+  useEffect(() => {
+    const cleanToken = inviteToken.trim();
+    if (!isAuthModalOpen || cleanToken.length < 8) {
+      setVerifiedInvite(null);
+      setInviteVerifyError('');
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const inv = await api.verifyInvitation(cleanToken);
+        if (cancelled) return;
+        setVerifiedInvite(inv);
+        setInviteVerifyError('');
+        if (inv.email) {
+          setInviteEmail((prev) => prev || inv.email);
+          setEmail((prev) => prev || inv.email);
+        }
+        if (inv.name) {
+          setInviteName((prev) => prev || inv.name);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setVerifiedInvite(null);
+          if (cleanToken.startsWith('INV-')) {
+            setInviteVerifyError(
+              'This offline/browser-only invitation token (INV-...) was generated locally without a server connection and cannot be verified across devices. Please ask the Super Administrator to generate and send a fresh invitation link.'
+            );
+          } else {
+            setInviteVerifyError(err?.message || 'Invalid, expired, or already used invitation token.');
+          }
+        }
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [inviteToken, isAuthModalOpen]);
 
   if (!isAuthModalOpen) return null;
 
@@ -79,12 +163,11 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
     setLoading(true);
     try {
       const user = await loginWithEmail(cleanEmail, password);
-      const roleTitle = user.role === 'super_admin' 
-        ? 'Super Administrator' 
-        : user.role === 'fellowship_leader'
-        ? `${user.assignedZone || 'Fellowship'} Leader`
-        : user.role.replace('_', ' ');
-      setSuccessMsg(`Welcome, ${user.name}! Signed in as ${roleTitle}.`);
+      const roleTitle = formatRoleTitle(user.role);
+      const placement = formatPlacement(user.assignedZone, user.assignedFellowship);
+      setSuccessMsg(
+        `Welcome, ${user.name}! Signed in as ${roleTitle}${placement ? ` (${placement})` : ''}.`
+      );
       setTimeout(() => closeAuthModal(), 500);
     } catch (err: any) {
       setError(err?.message || 'Authentication failed. Please verify your email and password.');
@@ -93,20 +176,23 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
     }
   };
 
-  // 2. Continue with Google
-  const handleGoogleLogin = async () => {
+  // 2. Continue with Google (supports both regular login and staff invitation activation)
+  const handleGoogleLogin = async (customEmail?: string, customInviteToken?: string) => {
     setError('');
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanEmail = (customEmail ?? email).trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
-      setError('Please enter your Google account email in the Email Address field above, then click Continue with Google.');
+      setError('Please enter your Google account email address first, then click Continue with Google.');
       return;
     }
+
+    const tokenToUse = (customInviteToken ?? inviteToken).trim() || undefined;
 
     setLoading(true);
     try {
       const user = await loginWithGoogle({
         email: cleanEmail,
-        name: cleanEmail.split('@')[0]
+        name: inviteName.trim() || verifiedInvite?.name || cleanEmail.split('@')[0],
+        invitationToken: tokenToUse
       });
 
       if (user.role === 'parent') {
@@ -115,21 +201,24 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
         return;
       }
 
-      const roleTitle = user.role === 'super_admin' 
-        ? 'Super Administrator' 
-        : user.role === 'fellowship_leader'
-        ? `${user.assignedZone || 'Fellowship'} Leader`
-        : user.role.replace('_', ' ');
-      setSuccessMsg(`Authenticated via Google as ${user.email} (${roleTitle})!`);
-      setTimeout(() => closeAuthModal(), 500);
+      if (tokenToUse) {
+        clearInviteQueryParams();
+      }
+
+      const roleTitle = formatRoleTitle(user.role);
+      const placement = formatPlacement(user.assignedZone, user.assignedFellowship);
+      setSuccessMsg(
+        `Authenticated via Google as ${user.email} — ${roleTitle}${placement ? ` (${placement})` : ''}!`
+      );
+      setTimeout(() => closeAuthModal(), 600);
     } catch (err: any) {
-      setError(err?.message || 'Google authentication failed. Please sign in with your email & password.');
+      setError(err?.message || 'Google authentication failed. Please check your invitation or sign in with email & password.');
     } finally {
       setLoading(false);
     }
   };
 
-  // 3. Accept Staff / Leader Invite
+  // 3. Accept Staff / Leader Invite with Password
   const handleStaffInviteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -154,10 +243,12 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
         password: invitePassword,
         name: inviteName.trim()
       });
-      const roleTitle = user.role === 'fellowship_leader' 
-        ? `${user.assignedZone || 'Fellowship'} Leader` 
-        : user.role.replace('_', ' ');
-      setSuccessMsg(`Invitation verified! Account activated as ${roleTitle}.`);
+      clearInviteQueryParams();
+      const roleTitle = formatRoleTitle(user.role);
+      const placement = formatPlacement(user.assignedZone, user.assignedFellowship);
+      setSuccessMsg(
+        `Invitation verified! Account activated as ${roleTitle}${placement ? ` — Placed in ${placement}` : ''}.`
+      );
       setTimeout(() => closeAuthModal(), 600);
     } catch (err: any) {
       setError(err?.message || 'Failed to activate invitation. Please check token and email.');
@@ -167,8 +258,8 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 space-y-5 shadow-2xl border-2 border-[#d4af37]/60 animate-in fade-in zoom-in-95 duration-150 my-6">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-start sm:items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-8 space-y-4 sm:space-y-5 shadow-2xl border-2 border-[#d4af37]/60 animate-in fade-in zoom-in-95 duration-150 my-auto">
         
         {/* Header */}
         <div className="text-center relative">
@@ -194,7 +285,7 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
         <div className="flex rounded-xl bg-gray-100 p-1 border border-gray-200">
           <button
             type="button"
-            onClick={() => { setTab('signin'); setError(''); setSuccessMsg(''); }}
+            onClick={() => { setTab('signin'); setError(''); setInviteVerifyError(''); setSuccessMsg(''); }}
             className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
               tab === 'signin'
                 ? 'bg-[#2a170e] text-[#ffd700] shadow-sm'
@@ -242,7 +333,7 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
             <button
               type="button"
               disabled={loading}
-              onClick={handleGoogleLogin}
+              onClick={() => handleGoogleLogin()}
               className="w-full py-2.5 px-4 bg-white hover:bg-gray-50 text-gray-800 border-2 border-gray-300 hover:border-[#d4af37] font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-xs transition-all cursor-pointer"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24">
@@ -271,6 +362,10 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
                   <input
                     type="email"
                     required
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    autoComplete="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="leader@dcutawala.org or pastor@dcutawala.org"
@@ -333,8 +428,36 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
         {tab === 'invite' && (
           <form onSubmit={handleStaffInviteSubmit} className="space-y-3">
             <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200/60 text-xs text-amber-900 leading-relaxed">
-              <strong>Invited Leaders & Staff:</strong> Enter the invitation token sent to you by the Church Office Super Administrator to set up your password and access your dashboard.
+              <strong>Invited Leaders & Staff:</strong> Enter the invitation token sent to you by the Church Office Super Administrator to activate your assigned Zone &amp; Micro Church Fellowship profile.
             </div>
+
+            {verifiedInvite && (
+              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-xs text-emerald-950 space-y-1">
+                <div className="flex items-center gap-1.5 font-bold text-emerald-800">
+                  <MapPin className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                  <span>Verified Invitation Placement</span>
+                </div>
+                <p>
+                  Role: <strong>{formatRoleTitle(verifiedInvite.role)}</strong>
+                </p>
+                {(verifiedInvite.assignedZone || verifiedInvite.assignedFellowship) && (
+                  <p>
+                    Assigned Placement:{' '}
+                    <strong>
+                      {verifiedInvite.assignedZone || 'All Zones'}
+                      {verifiedInvite.assignedFellowship ? ` — ${verifiedInvite.assignedFellowship} Fellowship` : ''}
+                    </strong>
+                  </p>
+                )}
+              </div>
+            )}
+
+            {!verifiedInvite && inviteVerifyError && !error && (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                <span className="font-medium leading-relaxed">{inviteVerifyError}</span>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
@@ -343,9 +466,12 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
               <input
                 type="text"
                 required
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 value={inviteToken}
                 onChange={(e) => setInviteToken(e.target.value)}
-                placeholder="e.g. dcu-inv-xxxx-xxxx"
+                placeholder="e.g. DCUINV1..."
                 className="w-full p-2.5 text-xs sm:text-sm border border-gray-300 rounded-xl font-mono focus:ring-2 focus:ring-[#d4af37] outline-hidden"
               />
             </div>
@@ -357,8 +483,15 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
               <input
                 type="email"
                 required
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                autoComplete="email"
                 value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
+                onChange={(e) => {
+                  setInviteEmail(e.target.value);
+                  setEmail(e.target.value);
+                }}
                 placeholder="leader.email@dcutawala.org"
                 className="w-full p-2.5 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
               />
@@ -370,6 +503,7 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
               </label>
               <input
                 type="text"
+                autoComplete="name"
                 value={inviteName}
                 onChange={(e) => setInviteName(e.target.value)}
                 placeholder="e.g. Deacon John Kamau"
@@ -385,6 +519,7 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
                 <input
                   type={showInvitePassword ? 'text' : 'password'}
                   required
+                  autoComplete="new-password"
                   value={invitePassword}
                   onChange={(e) => setInvitePassword(e.target.value)}
                   placeholder="Create your secure password"
@@ -409,6 +544,31 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
               {loading ? 'Activating Account...' : 'Activate Account & Sign In'}
               <ArrowRight className="w-4 h-4" />
             </button>
+
+            {inviteToken.trim() && (
+              <>
+                <div className="flex items-center my-1">
+                  <div className="flex-1 border-t border-gray-200" />
+                  <span className="px-3 text-[10px] text-gray-400 uppercase font-semibold">Or activate with Google</span>
+                  <div className="flex-1 border-t border-gray-200" />
+                </div>
+
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => handleGoogleLogin(inviteEmail, inviteToken)}
+                  className="w-full py-2 px-4 bg-white hover:bg-gray-50 text-gray-800 border border-gray-300 hover:border-[#d4af37] font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                  </svg>
+                  <span>Activate &amp; Continue with Google</span>
+                </button>
+              </>
+            )}
           </form>
         )}
 
@@ -416,3 +576,4 @@ export function AuthModal({ onNavigate }: AuthModalProps) {
     </div>
   );
 }
+

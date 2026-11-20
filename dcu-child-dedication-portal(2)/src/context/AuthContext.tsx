@@ -76,6 +76,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     refreshUser();
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('invite')) {
+        setIsAuthModalOpen(true);
+      }
+    }
   }, [refreshUser]);
 
   const loginWithEmail = async (email: string, password: string) => {

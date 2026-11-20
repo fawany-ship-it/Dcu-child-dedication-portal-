@@ -438,6 +438,67 @@ async function startServer() {
     const users = loadUsers();
     let user = users.find(u => u.email.toLowerCase() === cleanEmail);
 
+    // If a staff invitation token was provided, validate and apply it to either existing or new account
+    if (invitationToken) {
+      const verifyRes = verifyInvitation(invitationToken, cleanEmail);
+      if (!verifyRes.valid || !verifyRes.invitation) {
+        return res.status(400).json({ error: verifyRes.reason || 'Invalid staff invitation' });
+      }
+
+      const inv = verifyRes.invitation;
+      if (user) {
+        if (user.isSuspended) {
+          return res.status(403).json({ error: 'This account has been suspended by administration.' });
+        }
+        user.role = inv.role;
+        user.assignedZone = inv.assignedZone;
+        user.assignedFellowship = inv.assignedFellowship;
+        user.name = name || inv.name || user.name;
+        user.isApproved = true;
+        user.lastLoginAt = new Date().toISOString();
+        if (avatar && !user.avatar) user.avatar = avatar;
+      } else {
+        user = {
+          id: `usr-${Date.now()}`,
+          email: cleanEmail,
+          name: name || inv.name || cleanEmail.split('@')[0],
+          role: inv.role,
+          assignedZone: inv.assignedZone,
+          assignedFellowship: inv.assignedFellowship,
+          isApproved: true,
+          authProvider: 'google',
+          avatar,
+          createdAt: new Date().toISOString(),
+          lastLoginAt: new Date().toISOString()
+        };
+        users.push(user);
+      }
+
+      saveUsers(users);
+      markInvitationUsed(inv.tokenHash || '', inv);
+
+      writeAuditLog({
+        eventType: 'STAFF_INVITATION_ACCEPTED_VIA_GOOGLE',
+        actorId: user.id,
+        actorEmail: user.email,
+        actorRole: user.role,
+        outcome: 'SUCCESS',
+        ip: req.ip,
+        details: {
+          invitationId: inv.id,
+          role: inv.role,
+          assignedZone: inv.assignedZone,
+          assignedFellowship: inv.assignedFellowship
+        }
+      });
+
+      const { rawToken } = createSession(user, req.ip, req.headers['user-agent']);
+      return res.json({
+        user: sanitizeUser(user),
+        token: rawToken
+      });
+    }
+
     if (user) {
       if (user.isSuspended) {
         writeAuditLog({
@@ -466,48 +527,6 @@ async function startServer() {
         ip: req.ip
       });
 
-      return res.json({
-        user: sanitizeUser(user),
-        token: rawToken
-      });
-    }
-
-    // New Google User: Check if they possess a valid Staff Invitation Token
-    if (invitationToken) {
-      const verifyRes = verifyInvitation(invitationToken, cleanEmail);
-      if (!verifyRes.valid || !verifyRes.invitation) {
-        return res.status(400).json({ error: verifyRes.reason || 'Invalid staff invitation' });
-      }
-
-      const inv = verifyRes.invitation;
-      user = {
-        id: `usr-${Date.now()}`,
-        email: cleanEmail,
-        name: name || inv.name || cleanEmail.split('@')[0],
-        role: inv.role,
-        assignedZone: inv.assignedZone,
-        isApproved: true,
-        authProvider: 'google',
-        avatar,
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString()
-      };
-
-      users.push(user);
-      saveUsers(users);
-      markInvitationUsed(inv.tokenHash || '');
-
-      writeAuditLog({
-        eventType: 'STAFF_INVITATION_ACCEPTED_VIA_GOOGLE',
-        actorId: user.id,
-        actorEmail: user.email,
-        actorRole: user.role,
-        outcome: 'SUCCESS',
-        ip: req.ip,
-        details: { invitationId: inv.id, role: inv.role, assignedZone: inv.assignedZone }
-      });
-
-      const { rawToken } = createSession(user, req.ip, req.headers['user-agent']);
       return res.json({
         user: sanitizeUser(user),
         token: rawToken
@@ -573,10 +592,13 @@ async function startServer() {
       // Elevate existing account to invited staff role
       user.role = inv.role;
       user.assignedZone = inv.assignedZone;
+      user.assignedFellowship = inv.assignedFellowship;
       user.passwordHash = hash;
       user.salt = salt;
-      user.name = name || user.name;
+      user.name = name || inv.name || user.name;
       user.phone = phone || user.phone;
+      user.isApproved = true;
+      user.isSuspended = false;
       user.lastLoginAt = new Date().toISOString();
     } else {
       // Create new staff account
@@ -586,6 +608,7 @@ async function startServer() {
         name: name || inv.name || cleanEmail.split('@')[0],
         role: inv.role,
         assignedZone: inv.assignedZone,
+        assignedFellowship: inv.assignedFellowship,
         phone: phone || '',
         isApproved: true,
         authProvider: 'email',
@@ -598,7 +621,7 @@ async function startServer() {
     }
 
     saveUsers(users);
-    markInvitationUsed(inv.tokenHash || '');
+    markInvitationUsed(inv.tokenHash || '', inv);
 
     writeAuditLog({
       eventType: 'STAFF_INVITATION_ACCEPTED',
@@ -607,7 +630,12 @@ async function startServer() {
       actorRole: user.role,
       outcome: 'SUCCESS',
       ip: req.ip,
-      details: { invitationId: inv.id, role: inv.role, assignedZone: inv.assignedZone }
+      details: {
+        invitationId: inv.id,
+        role: inv.role,
+        assignedZone: inv.assignedZone,
+        assignedFellowship: inv.assignedFellowship
+      }
     });
 
     const { rawToken } = createSession(user, req.ip, req.headers['user-agent']);
@@ -626,25 +654,18 @@ async function startServer() {
       return res.status(400).json({ error: 'Token is required' });
     }
 
-    const invites = loadInvitations();
-    const inv = invites.find(i => {
-      const verifyRes = verifyInvitation(token, i.email);
-      return verifyRes.valid;
-    });
-
-    if (!inv) {
-      return res.status(400).json({ error: 'Invitation is invalid, expired, or already used.' });
+    const verifyRes = verifyInvitation(token, email || undefined);
+    if (!verifyRes.valid || !verifyRes.invitation) {
+      return res.status(400).json({ error: verifyRes.reason || 'Invitation is invalid, expired, or already used.' });
     }
 
-    if (email && inv.email.toLowerCase() !== email.toLowerCase()) {
-      return res.status(400).json({ error: `This invitation was issued specifically for ${inv.email}.` });
-    }
-
+    const inv = verifyRes.invitation;
     res.json({
       email: inv.email,
       name: inv.name,
       role: inv.role,
       assignedZone: inv.assignedZone,
+      assignedFellowship: inv.assignedFellowship,
       expiresAt: inv.expiresAt
     });
   });
@@ -716,6 +737,15 @@ async function startServer() {
 
   // 7. Get Current User Profile (Authenticated)
   app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    if (req.user) {
+      req.user.lastLoginAt = new Date().toISOString();
+      const users = loadUsers();
+      const u = users.find(x => x.id === req.user!.id);
+      if (u) {
+        u.lastLoginAt = req.user.lastLoginAt;
+        saveUsers(users);
+      }
+    }
     res.json(sanitizeUser(req.user!));
   });
 
@@ -762,9 +792,18 @@ async function startServer() {
     }
 
     if (role === 'fellowship_leader') {
-      const zone = req.user!.assignedZone || 'Zone A';
-      const zoneFiltered = list.filter(d => d.selectedZone === zone);
-      return res.json(zoneFiltered);
+      const zone = req.user!.assignedZone;
+      if (!zone) {
+        return res.json([]);
+      }
+      let filtered = list.filter(d => d.selectedZone === zone);
+      if (req.user!.assignedFellowship) {
+        const targetFellowship = req.user!.assignedFellowship.toLowerCase().trim();
+        filtered = filtered.filter(
+          d => (d.selectedFellowship || '').toLowerCase().trim() === targetFellowship
+        );
+      }
+      return res.json(filtered);
     }
 
     if (role === 'parent') {
@@ -929,9 +968,13 @@ async function startServer() {
     const currentRecord = dedications[index];
     const role = req.userRole || req.user!.role;
 
-    // FELLOWSHIP LEADER: Strictly constrained to their zone and leadership confirmation fields
+    // FELLOWSHIP LEADER: Strictly constrained to their zone (and assigned fellowship if specified) and leadership confirmation fields
     if (role === 'fellowship_leader') {
-      if (currentRecord.selectedZone !== req.user!.assignedZone) {
+      const sameZone = Boolean(req.user!.assignedZone) && currentRecord.selectedZone === req.user!.assignedZone;
+      const sameFellowship = !req.user!.assignedFellowship ||
+        (currentRecord.selectedFellowship || '').toLowerCase().trim() === req.user!.assignedFellowship.toLowerCase().trim();
+
+      if (!sameZone || !sameFellowship) {
         writeAuditLog({
           eventType: 'CROSS_ZONE_TAMPER_BLOCKED',
           actorId: req.user!.id,
@@ -940,9 +983,16 @@ async function startServer() {
           targetId: id,
           outcome: 'FAILURE',
           ip: req.ip,
-          details: { recordZone: currentRecord.selectedZone, leaderZone: req.user!.assignedZone }
+          details: {
+            recordZone: currentRecord.selectedZone,
+            recordFellowship: currentRecord.selectedFellowship,
+            leaderZone: req.user!.assignedZone,
+            leaderFellowship: req.user!.assignedFellowship
+          }
         });
-        return res.status(403).json({ error: 'Access denied: You can only confirm records in your assigned fellowship zone.' });
+        return res.status(403).json({
+          error: 'Access denied: You can only confirm records in your assigned fellowship zone and micro church fellowship.'
+        });
       }
 
       // Fellowship leader can ONLY update leadership confirmation fields
@@ -1297,15 +1347,23 @@ async function startServer() {
   // ==========================================
 
   // Get Users Directory (Super Admin or Office Admin)
-  app.get('/api/users', requireRoles(['super_admin', 'office_admin']), (_req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/users', requireRoles(['super_admin', 'office_admin']), (req: AuthenticatedRequest, res: Response) => {
     const users = loadUsers();
+    // Ensure active requesting staff user has their lastLoginAt marked as active
+    if (req.user) {
+      const self = users.find(u => u.id === req.user!.id || u.email.toLowerCase() === req.user!.email.toLowerCase());
+      if (self) {
+        self.lastLoginAt = new Date().toISOString();
+        saveUsers(users);
+      }
+    }
     // NEVER leak passwordHash or salt
     res.json(users.map(sanitizeUser));
   });
 
   // Issue Staff Invitation (Super Admin only)
   app.post('/api/users/invite', requireRoles(['super_admin']), (req: AuthenticatedRequest, res: Response) => {
-    const { email, name, role, assignedZone } = req.body;
+    const { email, name, role, assignedZone, assignedFellowship } = req.body;
     if (!email || !email.includes('@')) {
       return res.status(400).json({ error: 'Valid email address is required.' });
     }
@@ -1320,6 +1378,7 @@ async function startServer() {
       name,
       role,
       assignedZone,
+      assignedFellowship,
       invitedBy: req.user!.id,
       invitedByEmail: req.user!.email
     });
@@ -1332,13 +1391,15 @@ async function startServer() {
       targetType: 'invitation',
       outcome: 'SUCCESS',
       ip: req.ip,
-      details: { invitedEmail: email, role, assignedZone }
+      details: { invitedEmail: email, role, assignedZone, assignedFellowship }
     });
 
+    const host = req.get('x-forwarded-host') || req.get('host');
+    const proto = req.get('x-forwarded-proto') || req.protocol;
     res.status(201).json({
       invitation,
       rawToken,
-      inviteUrl: `${req.protocol}://${req.get('host')}/?invite=${rawToken}&email=${encodeURIComponent(email)}`
+      inviteUrl: `${proto}://${host}/?invite=${encodeURIComponent(rawToken)}&email=${encodeURIComponent(email.toLowerCase().trim())}`
     });
   });
 
@@ -1371,7 +1432,7 @@ async function startServer() {
   // Update User Role & Zone (Super Admin only)
   app.put('/api/users/:id/role', requireRoles(['super_admin']), (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
-    const { role, assignedZone } = req.body;
+    const { role, assignedZone, assignedFellowship } = req.body;
 
     const users = loadUsers();
     const index = users.findIndex(u => u.id === id);
@@ -1390,6 +1451,7 @@ async function startServer() {
     const oldRole = users[index].role;
     if (role) users[index].role = role;
     if (assignedZone !== undefined) users[index].assignedZone = assignedZone;
+    if (assignedFellowship !== undefined) users[index].assignedFellowship = assignedFellowship;
 
     saveUsers(users);
 

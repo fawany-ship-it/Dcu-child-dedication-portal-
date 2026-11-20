@@ -17,9 +17,36 @@ const STORAGE_PAST_DEDICATIONS = `${STORAGE_PREFIX}past_dedications`;
 const STORAGE_INVITATIONS = `${STORAGE_PREFIX}invitations`;
 const STORAGE_AUDIT_LOGS = `${STORAGE_PREFIX}audit_logs`;
 const STORAGE_CURRENT_USER = `${STORAGE_PREFIX}current_user`;
+const STORAGE_STAFF_PASSPORTS = `${STORAGE_PREFIX}staff_passports_v1`;
 
 let memoryToken: string | null = null;
 let isStaticHostingMode = false;
+
+function isTrueStaticSpaFallback(res: Response): boolean {
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+  return res.status === 200 && ct.includes('text/html');
+}
+
+function getStoredCredentialPassport(email: string): string | undefined {
+  try {
+    const raw = localStorage.getItem(STORAGE_STAFF_PASSPORTS);
+    if (!raw) return undefined;
+    const map = JSON.parse(raw) as Record<string, string>;
+    return map[email.toLowerCase().trim()];
+  } catch {
+    return undefined;
+  }
+}
+
+function saveStoredCredentialPassport(email: string, passport?: string) {
+  if (!passport) return;
+  try {
+    const raw = localStorage.getItem(STORAGE_STAFF_PASSPORTS);
+    const map = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    map[email.toLowerCase().trim()] = passport;
+    localStorage.setItem(STORAGE_STAFF_PASSPORTS, JSON.stringify(map));
+  } catch {}
+}
 
 // ============================================================
 // TOKEN MANAGEMENT (with in-memory fallback for iframes)
@@ -90,6 +117,7 @@ function initLocalDatabase() {
           phone: '0723 102273',
           password: 'DcuAdmin2026!#',
           createdAt: '2026-01-01T00:00:00.000Z',
+          lastLoginAt: new Date().toISOString(),
           isSuspended: false
         });
       }
@@ -250,36 +278,36 @@ export const api = {
   async login(email: string, password: string): Promise<{ user: UserProfile; token: string; requiresMfa?: boolean }> {
     const cleanEmail = email.toLowerCase().trim();
 
-    if (!isStaticHostingMode) {
-      try {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: cleanEmail, password })
-        });
+    let receivedJson = false;
+    try {
+      const credentialPassport = getStoredCredentialPassport(cleanEmail);
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, password, credentialPassport })
+      });
 
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Invalid credentials' }));
-            throw new Error(err.error || 'Invalid credentials');
-          }
-          const data = await res.json();
-          if (data.token) setSessionToken(data.token);
-          setCurrentLocalUser(data.user);
-          return data;
-        } else {
-          // Received HTML (Vercel static rewrite) - switch to local mode
-          isStaticHostingMode = true;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        receivedJson = true;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Invalid credentials' }));
+          throw new Error(err.error || 'Invalid credentials');
         }
-      } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token') && !err.message.includes('Invalid credentials')) {
-          isStaticHostingMode = true;
-        } else if (err.message && err.message.includes('Invalid credentials')) {
-          throw err;
-        } else {
-          isStaticHostingMode = true;
-        }
+        isStaticHostingMode = false;
+        const data = await res.json();
+        if (data.token) setSessionToken(data.token);
+        if (data.credentialPassport) saveStoredCredentialPassport(cleanEmail, data.credentialPassport);
+        setCurrentLocalUser(data.user);
+        return data;
+      } else if (isTrueStaticSpaFallback(res)) {
+        isStaticHostingMode = true;
+      } else {
+        throw new Error(`Authentication service error (HTTP ${res.status}). Please refresh and try again.`);
+      }
+    } catch (err: any) {
+      if (receivedJson || !isStaticHostingMode) {
+        throw new Error(err?.message || 'Unable to reach the authentication server. Please try again.');
       }
     }
 
@@ -317,6 +345,15 @@ export const api = {
       }
     }
 
+    const nowIso = new Date().toISOString();
+    user.lastLoginAt = nowIso;
+    const usersToUpdate = getLocalUsers();
+    const uIdx = usersToUpdate.findIndex(u => u.email.toLowerCase() === cleanEmail);
+    if (uIdx >= 0) {
+      usersToUpdate[uIdx].lastLoginAt = nowIso;
+      saveLocalUsers(usersToUpdate);
+    }
+
     const token = `dcu-token-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setSessionToken(token);
     setCurrentLocalUser(user);
@@ -341,6 +378,7 @@ export const api = {
     const cleanEmail = data.email.toLowerCase().trim();
 
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/auth/register', {
           method: 'POST',
@@ -349,6 +387,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Registration failed' }));
             throw new Error(err.error || 'Registration failed');
@@ -361,8 +400,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to reach the server. Please try again.');
       }
     }
 
@@ -412,43 +451,91 @@ export const api = {
   }): Promise<{ user: UserProfile; token: string }> {
     const cleanEmail = payload.email.toLowerCase().trim();
 
-    if (!isStaticHostingMode) {
-      try {
-        const res = await fetch('/api/auth/google', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...payload, email: cleanEmail })
-        });
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Google authentication failed' }));
-            throw new Error(err.error || 'Google authentication failed');
-          }
-          const data = await res.json();
-          if (data.token) setSessionToken(data.token);
-          setCurrentLocalUser(data.user);
-          return data;
-        } else {
-          isStaticHostingMode = true;
+    const cleanInviteToken = payload.invitationToken?.trim() || undefined;
+
+    let receivedJson = false;
+    try {
+      const credentialPassport = getStoredCredentialPassport(cleanEmail);
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, email: cleanEmail, invitationToken: cleanInviteToken, credentialPassport })
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        receivedJson = true;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Google authentication failed' }));
+          throw new Error(err.error || 'Google authentication failed');
         }
-      } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token') && !err.message.includes('Google authentication failed')) {
-          isStaticHostingMode = true;
-        } else if (err.message && err.message.includes('Google authentication failed')) {
-          isStaticHostingMode = true; // Fallback to local on Vercel
-        } else {
-          isStaticHostingMode = true;
-        }
+        isStaticHostingMode = false;
+        const data = await res.json();
+        if (data.token) setSessionToken(data.token);
+        if (data.credentialPassport) saveStoredCredentialPassport(cleanEmail, data.credentialPassport);
+        setCurrentLocalUser(data.user);
+        return data;
+      } else if (isTrueStaticSpaFallback(res)) {
+        isStaticHostingMode = true;
+      } else {
+        throw new Error(`Google authentication service error (HTTP ${res.status}). Please refresh and try again.`);
+      }
+    } catch (err: any) {
+      if (receivedJson || !isStaticHostingMode) {
+        throw new Error(err?.message || 'Unable to reach the authentication server. Please try again.');
       }
     }
 
-    // Local Fallback
+    // Local Fallback (pure static hosting only)
     initLocalDatabase();
     const users = getLocalUsers();
     let user = users.find(u => u.email.toLowerCase() === cleanEmail);
 
-    if (cleanEmail === 'fawany@gmail.com') {
+    if (cleanInviteToken) {
+      const invites = getLocalInvitations();
+      const inv = invites.find(i =>
+        (i.tokenHash === cleanInviteToken || i.token === cleanInviteToken) &&
+        i.email.toLowerCase() === cleanEmail &&
+        i.status === 'pending'
+      );
+      if (!inv) {
+        throw new Error('Invalid or expired staff invitation.');
+      }
+      if (new Date(inv.expiresAt).getTime() < Date.now()) {
+        inv.status = 'expired';
+        saveLocalInvitations(invites);
+        throw new Error('This invitation has expired.');
+      }
+
+      if (user) {
+        if (user.isSuspended) {
+          throw new Error('This account has been suspended by administration.');
+        }
+        user.role = inv.role;
+        user.assignedZone = inv.assignedZone;
+        user.assignedFellowship = inv.assignedFellowship;
+        user.name = payload.name || inv.name || user.name;
+        user.isApproved = true;
+        if (payload.avatar && !user.avatar) user.avatar = payload.avatar;
+      } else {
+        user = {
+          id: `usr-staff-${Date.now()}`,
+          email: cleanEmail,
+          name: payload.name || inv.name || cleanEmail.split('@')[0],
+          avatar: payload.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(cleanEmail)}`,
+          role: inv.role,
+          assignedZone: inv.assignedZone,
+          assignedFellowship: inv.assignedFellowship,
+          isApproved: true,
+          authProvider: 'google',
+          createdAt: new Date().toISOString()
+        };
+        users.push(user);
+      }
+      saveLocalUsers(users);
+      inv.status = 'accepted';
+      inv.usedAt = new Date().toISOString();
+      saveLocalInvitations(invites);
+    } else if (cleanEmail === 'fawany@gmail.com') {
       if (!user) {
         user = {
           id: 'usr-admin-1',
@@ -482,6 +569,15 @@ export const api = {
       saveLocalUsers(users);
     }
 
+    const nowIso = new Date().toISOString();
+    user.lastLoginAt = nowIso;
+    const usersToUpdate = getLocalUsers();
+    const uIdx = usersToUpdate.findIndex(u => u.email.toLowerCase() === cleanEmail);
+    if (uIdx >= 0) {
+      usersToUpdate[uIdx].lastLoginAt = nowIso;
+      saveLocalUsers(usersToUpdate);
+    }
+
     const token = `dcu-token-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setSessionToken(token);
     setCurrentLocalUser(user);
@@ -505,39 +601,65 @@ export const api = {
     phone?: string;
   }): Promise<{ user: UserProfile; token: string }> {
     const cleanEmail = payload.email.toLowerCase().trim();
+    const cleanToken = payload.token.trim();
 
-    if (!isStaticHostingMode) {
-      try {
-        const res = await fetch('/api/auth/accept-invitation', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...payload, email: cleanEmail })
-        });
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Failed to accept invitation' }));
-            throw new Error(err.error || 'Failed to accept invitation');
-          }
-          const data = await res.json();
-          if (data.token) setSessionToken(data.token);
-          setCurrentLocalUser(data.user);
-          return data;
-        } else {
-          isStaticHostingMode = true;
+    let receivedJson = false;
+    try {
+      const res = await fetch('/api/auth/accept-invitation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, token: cleanToken, email: cleanEmail })
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        receivedJson = true;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Failed to accept invitation' }));
+          throw new Error(err.error || 'Failed to accept invitation');
         }
-      } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
+        isStaticHostingMode = false;
+        const data = await res.json();
+        if (data.token) setSessionToken(data.token);
+        if (data.credentialPassport) saveStoredCredentialPassport(cleanEmail, data.credentialPassport);
+        setCurrentLocalUser(data.user);
+        return data;
+      } else if (isTrueStaticSpaFallback(res)) {
         isStaticHostingMode = true;
+      } else {
+        throw new Error(`Invitation activation server error (HTTP ${res.status}). Please try again.`);
+      }
+    } catch (err: any) {
+      if (receivedJson || !isStaticHostingMode) {
+        throw new Error(err?.message || 'Unable to reach the server to verify your invitation. Please try again.');
       }
     }
 
-    // Local Fallback
+    // Local Fallback (pure static hosting only)
     initLocalDatabase();
     const invites = getLocalInvitations();
-    const inv = invites.find(i => i.email.toLowerCase() === cleanEmail && i.status === 'pending');
-    const role: UserRole = inv ? inv.role : 'fellowship_leader';
-    const assignedZone = inv?.assignedZone;
+    const inv = invites.find(i =>
+      (i.tokenHash === cleanToken || i.token === cleanToken) &&
+      i.email.toLowerCase() === cleanEmail
+    );
+    if (!inv) {
+      throw new Error('Invalid invitation token or email address.');
+    }
+    if (inv.status === 'revoked') {
+      throw new Error('This invitation has been revoked by administration.');
+    }
+    if (inv.status === 'accepted' || inv.usedAt) {
+      throw new Error('This invitation has already been used.');
+    }
+    if (new Date(inv.expiresAt).getTime() < Date.now()) {
+      inv.status = 'expired';
+      saveLocalInvitations(invites);
+      throw new Error('This invitation has expired.');
+    }
+
+    const role: UserRole = inv.role;
+    const assignedZone = inv.assignedZone;
+    const assignedFellowship = inv.assignedFellowship;
+    const nowIso = new Date().toISOString();
 
     const users = getLocalUsers();
     let user = users.find(u => u.email.toLowerCase() === cleanEmail);
@@ -545,29 +667,36 @@ export const api = {
     if (user) {
       user.role = role;
       user.assignedZone = assignedZone;
+      user.assignedFellowship = assignedFellowship;
+      user.name = payload.name?.trim() || inv.name || user.name;
+      if (payload.phone?.trim()) user.phone = payload.phone.trim();
       user.password = payload.password;
+      user.isApproved = true;
+      user.isSuspended = false;
+      user.lastLoginAt = nowIso;
     } else {
       user = {
         id: `usr-staff-${Date.now()}`,
         email: cleanEmail,
-        name: payload.name?.trim() || cleanEmail.split('@')[0],
+        name: payload.name?.trim() || inv.name || cleanEmail.split('@')[0],
         phone: payload.phone?.trim() || '',
         role,
         assignedZone,
+        assignedFellowship,
         password: payload.password,
         isApproved: true,
+        isSuspended: false,
         authProvider: 'email',
-        createdAt: new Date().toISOString()
+        createdAt: nowIso,
+        lastLoginAt: nowIso
       };
       users.push(user);
     }
     saveLocalUsers(users);
 
-    if (inv) {
-      inv.status = 'accepted';
-      inv.usedAt = new Date().toISOString();
-      saveLocalInvitations(invites);
-    }
+    inv.status = 'accepted';
+    inv.usedAt = nowIso;
+    saveLocalInvitations(invites);
 
     const token = `dcu-token-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setSessionToken(token);
@@ -577,55 +706,77 @@ export const api = {
   },
 
   async verifyInvitation(token: string, email?: string): Promise<any> {
-    if (!isStaticHostingMode) {
-      try {
-        const query = new URLSearchParams({ token });
-        if (email) query.set('email', email);
-        const res = await fetch(`/api/auth/verify-invitation?${query.toString()}`);
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Invalid invitation' }));
-            throw new Error(err.error || 'Invalid invitation');
-          }
-          return res.json();
-        } else {
-          isStaticHostingMode = true;
+    const cleanToken = token.trim();
+    const cleanEmail = email?.trim();
+
+    let receivedJson = false;
+    try {
+      const query = new URLSearchParams({ token: cleanToken });
+      if (cleanEmail) query.set('email', cleanEmail);
+      const res = await fetch(`/api/auth/verify-invitation?${query.toString()}`);
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        receivedJson = true;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Invalid invitation' }));
+          throw new Error(err.error || 'Invalid invitation');
         }
-      } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
+        isStaticHostingMode = false;
+        return res.json();
+      } else if (isTrueStaticSpaFallback(res)) {
         isStaticHostingMode = true;
+      } else {
+        throw new Error(`Invitation verification failed (HTTP ${res.status}). Please refresh and try again.`);
+      }
+    } catch (err: any) {
+      if (receivedJson || !isStaticHostingMode) {
+        throw new Error(err?.message || 'Unable to verify invitation right now.');
       }
     }
 
-    // Local Fallback
+    // Local Fallback (pure static hosting only)
     const invites = getLocalInvitations();
-    const inv = invites.find(i => i.status === 'pending');
+    const inv = invites.find(i =>
+      (i.tokenHash === cleanToken || i.token === cleanToken) &&
+      i.status === 'pending' &&
+      (!cleanEmail || i.email.toLowerCase() === cleanEmail.toLowerCase())
+    );
     if (!inv) throw new Error('Invalid or expired invitation token.');
+    if (new Date(inv.expiresAt).getTime() < Date.now()) {
+      inv.status = 'expired';
+      saveLocalInvitations(invites);
+      throw new Error('This invitation has expired.');
+    }
     return inv;
   },
 
   async getMe(): Promise<UserProfile> {
     const currentLocal = getCurrentLocalUser();
 
-    if (!isStaticHostingMode) {
-      try {
-        const res = await fetch('/api/auth/me', {
-          headers: getAuthHeaders()
-        });
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          if (!res.ok) throw new Error('Not authenticated');
-          const data = await res.json();
-          setCurrentLocalUser(data);
-          return data;
-        } else {
-          isStaticHostingMode = true;
+    let receivedJson = false;
+    try {
+      const res = await fetch('/api/auth/me', {
+        headers: getAuthHeaders()
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        receivedJson = true;
+        if (!res.ok) {
+          setSessionToken(null);
+          setCurrentLocalUser(null);
+          throw new Error('Not authenticated');
         }
-      } catch (err: any) {
-        if (currentLocal) return currentLocal;
-        throw new Error('Not authenticated');
+        isStaticHostingMode = false;
+        const data = await res.json();
+        setCurrentLocalUser(data);
+        return data;
+      } else if (isTrueStaticSpaFallback(res)) {
+        isStaticHostingMode = true;
       }
+    } catch {
+      if (receivedJson) throw new Error('Not authenticated');
+      if (currentLocal) return currentLocal;
+      throw new Error('Not authenticated');
     }
 
     if (currentLocal) return currentLocal;
@@ -655,6 +806,7 @@ export const api = {
     const cleanEmail = payload.email.toLowerCase().trim();
 
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/security/bootstrap-admin', {
           method: 'POST',
@@ -663,6 +815,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Bootstrap failed' }));
             throw new Error(err.error || 'Bootstrap failed');
@@ -675,8 +828,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to reach the server.');
       }
     }
 
@@ -725,14 +878,16 @@ export const api = {
 
   async getDedications(): Promise<DedicationRecord[]> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/dedications', {
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
-            if (res.status === 401) return [];
+            if (res.status === 401 || res.status === 403) return [];
             throw new Error(`Failed to fetch dedications (${res.status})`);
           }
           const list = await res.json();
@@ -741,8 +896,9 @@ export const api = {
         } else {
           isStaticHostingMode = true;
         }
-      } catch {
-        isStaticHostingMode = true;
+      } catch (err: any) {
+        if (receivedJson) throw err;
+        return [];
       }
     }
 
@@ -756,8 +912,16 @@ export const api = {
       return all;
     }
     if (role === 'fellowship_leader') {
-      const zone = user.assignedZone || 'Zone A';
-      return all.filter(d => d.selectedZone === zone);
+      const zone = user.assignedZone;
+      if (!zone) return [];
+      let filtered = all.filter(d => d.selectedZone === zone);
+      if (user.assignedFellowship) {
+        const targetFellowship = user.assignedFellowship.toLowerCase().trim();
+        filtered = filtered.filter(
+          d => (d.selectedFellowship || '').toLowerCase().trim() === targetFellowship
+        );
+      }
+      return filtered;
     }
     if (role === 'parent') {
       return all.filter(d => 
@@ -770,6 +934,7 @@ export const api = {
 
   async createDedication(record: Partial<DedicationRecord>): Promise<DedicationRecord> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/dedications', {
           method: 'POST',
@@ -778,17 +943,21 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to create record' }));
             throw new Error(err.error || 'Submission failed');
           }
-          return res.json();
+          const created: DedicationRecord = await res.json();
+          const all = getLocalDedications();
+          saveLocalDedications([created, ...all.filter(d => d.id !== created.id)]);
+          return created;
         } else {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to submit registration right now. Please try again.');
       }
     }
 
@@ -845,12 +1014,14 @@ export const api = {
 
   async trackDedication(id: string, phone?: string): Promise<any> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const query = new URLSearchParams({ id });
         if (phone) query.set('phone', phone);
         const res = await fetch(`/api/dedications/track?${query.toString()}`);
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Tracking failed' }));
             throw new Error(err.error || 'Record not found');
@@ -860,8 +1031,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to track dedication right now.');
       }
     }
 
@@ -885,6 +1056,7 @@ export const api = {
 
   async updateDedication(id: string, updates: Partial<DedicationRecord>): Promise<DedicationRecord> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/dedications/${id}`, {
           method: 'PUT',
@@ -893,6 +1065,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Update failed' }));
             throw new Error(err.error || 'Failed to update record');
@@ -902,8 +1075,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to update dedication right now.');
       }
     }
 
@@ -931,6 +1104,7 @@ export const api = {
 
   async deleteDedication(id: string): Promise<boolean> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/dedications/${id}`, {
           method: 'DELETE',
@@ -938,6 +1112,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Delete failed' }));
             throw new Error(err.error || 'Failed to delete record');
@@ -947,8 +1122,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to delete dedication right now.');
       }
     }
 
@@ -968,6 +1143,7 @@ export const api = {
 
   async bulkImport(records: any[]): Promise<{ count: number; total: number }> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/dedications/bulk-import', {
           method: 'POST',
@@ -976,6 +1152,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Bulk import failed' }));
             throw new Error(err.error || 'Bulk import failed');
@@ -985,8 +1162,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to import records right now.');
       }
     }
 
@@ -1003,12 +1180,14 @@ export const api = {
 
   async getPastDedications(): Promise<PastDedicationRecord[]> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/past-dedications', {
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             if (res.status === 401 || res.status === 403) return [];
             throw new Error('Failed to load past dedications');
@@ -1020,7 +1199,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch {
-        isStaticHostingMode = true;
+        if (receivedJson) return [];
+        return [];
       }
     }
     const current = getCurrentLocalUser();
@@ -1032,6 +1212,7 @@ export const api = {
 
   async createPastDedication(record: Partial<PastDedicationRecord>): Promise<PastDedicationRecord> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/past-dedications', {
           method: 'POST',
@@ -1040,6 +1221,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to create past record' }));
             throw new Error(err.error || 'Failed to create past record');
@@ -1049,8 +1231,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to save archive record right now.');
       }
     }
 
@@ -1087,6 +1269,7 @@ export const api = {
 
   async bulkImportPastDedications(records: any[], options?: { replaceYear?: number; replaceAll?: boolean }): Promise<{ success: boolean; count: number }> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const payload = options ? { records, replaceYear: options.replaceYear, replaceAll: options.replaceAll } : records;
         const res = await fetch('/api/past-dedications/bulk-import', {
@@ -1096,6 +1279,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Bulk import failed' }));
             throw new Error(err.error || 'Bulk import failed');
@@ -1105,8 +1289,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to bulk import past dedications right now.');
       }
     }
 
@@ -1125,6 +1309,7 @@ export const api = {
 
   async updatePastDedication(id: string, updates: Partial<PastDedicationRecord>): Promise<PastDedicationRecord> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/past-dedications/${id}`, {
           method: 'PUT',
@@ -1133,6 +1318,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to update record' }));
             throw new Error(err.error || 'Failed to update record');
@@ -1142,8 +1328,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to update archive record right now.');
       }
     }
 
@@ -1158,6 +1344,7 @@ export const api = {
 
   async deletePastDedication(id: string): Promise<boolean> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/past-dedications/${id}`, {
           method: 'DELETE',
@@ -1165,6 +1352,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Delete failed' }));
             throw new Error(err.error || 'Delete failed');
@@ -1174,8 +1362,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to delete archive record right now.');
       }
     }
 
@@ -1192,12 +1380,14 @@ export const api = {
 
   async getUsers(): Promise<UserProfile[]> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/users', {
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) return [];
           const users = await res.json();
           saveLocalUsers(users);
@@ -1206,11 +1396,21 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch {
-        isStaticHostingMode = true;
+        if (receivedJson) return [];
+        return [];
       }
     }
 
-    return getLocalUsers().map(({ password, ...u }) => u);
+    const current = getCurrentLocalUser();
+    return getLocalUsers().map(({ password, ...u }) => {
+      if (current && (current.id === u.id || current.email.toLowerCase() === u.email.toLowerCase())) {
+        return {
+          ...u,
+          lastLoginAt: current.lastLoginAt || u.lastLoginAt || new Date().toISOString()
+        };
+      }
+      return u;
+    });
   },
 
   async inviteStaff(payload: {
@@ -1218,71 +1418,52 @@ export const api = {
     name?: string;
     role: 'super_admin' | 'office_admin' | 'pastor' | 'fellowship_leader';
     assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E';
+    assignedFellowship?: string;
   }): Promise<{ invitation: StaffInvitation; rawToken: string; inviteUrl: string }> {
-    if (!isStaticHostingMode) {
-      try {
-        const res = await fetch('/api/users/invite', {
-          method: 'POST',
-          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify(payload)
-        });
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Failed to issue invitation' }));
-            throw new Error(err.error || 'Failed to issue invitation');
-          }
-          return res.json();
-        } else {
-          isStaticHostingMode = true;
-        }
-      } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
-      }
+    const res = await fetch('/api/users/invite', {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload)
+    });
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error(
+        `Cannot issue cross-device staff invitation because the server API (/api/users/invite) returned HTTP ${res.status} (${contentType || 'non-JSON'}). Please verify the backend API is deployed and try again.`
+      );
     }
-
-    // Local Fallback
-    const token = `INV-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    const inv: StaffInvitation = {
-      id: `inv-${Date.now()}`,
-      tokenHash: token,
-      email: payload.email.toLowerCase().trim(),
-      name: payload.name || payload.email.split('@')[0],
-      role: payload.role,
-      assignedZone: payload.assignedZone,
-      invitedBy: 'usr-admin-1',
-      invitedByEmail: 'fawany@gmail.com',
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-      status: 'pending'
-    };
-
-    const invites = getLocalInvitations();
-    invites.unshift(inv);
-    saveLocalInvitations(invites);
-
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const inviteUrl = `${origin}/?invite=${token}&email=${encodeURIComponent(inv.email)}`;
-
-    return { invitation: inv, rawToken: token, inviteUrl };
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to issue invitation' }));
+      throw new Error(err.error || 'Failed to issue invitation');
+    }
+    isStaticHostingMode = false;
+    const data = await res.json();
+    if (!data?.rawToken || !String(data.rawToken).startsWith('DCUINV1.')) {
+      throw new Error('Server did not return a signed cross-device invitation token (DCUINV1). Please refresh and try again.');
+    }
+    if (typeof window !== 'undefined') {
+      data.inviteUrl = `${window.location.origin}/?invite=${encodeURIComponent(data.rawToken)}&email=${encodeURIComponent(payload.email.toLowerCase().trim())}`;
+    }
+    return data;
   },
 
   async getInvitations(): Promise<StaffInvitation[]> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/invitations', {
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) return [];
           return res.json();
         } else {
           isStaticHostingMode = true;
         }
       } catch {
-        isStaticHostingMode = true;
+        if (receivedJson) return [];
+        return [];
       }
     }
 
@@ -1291,6 +1472,7 @@ export const api = {
 
   async revokeInvitation(id: string): Promise<boolean> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/invitations/${id}/revoke`, {
           method: 'POST',
@@ -1298,6 +1480,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to revoke' }));
             throw new Error(err.error || 'Failed to revoke');
@@ -1307,8 +1490,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to revoke invitation right now.');
       }
     }
 
@@ -1319,16 +1502,18 @@ export const api = {
     return true;
   },
 
-  async updateUserRole(id: string, role: string, assignedZone?: string): Promise<UserProfile> {
+  async updateUserRole(id: string, role: string, assignedZone?: string, assignedFellowship?: string): Promise<UserProfile> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/users/${id}/role`, {
           method: 'PUT',
           headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ role, assignedZone })
+          body: JSON.stringify({ role, assignedZone, assignedFellowship })
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to update user role' }));
             throw new Error(err.error || 'Failed to update user role');
@@ -1338,8 +1523,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to update user role right now.');
       }
     }
 
@@ -1349,12 +1534,16 @@ export const api = {
     if (!user) throw new Error('User not found.');
     user.role = (role === 'admin' ? 'super_admin' : role) as UserRole;
     user.assignedZone = assignedZone as any;
+    if (assignedFellowship !== undefined) {
+      user.assignedFellowship = assignedFellowship;
+    }
     saveLocalUsers(users);
     return user;
   },
 
   async updateUserStatus(id: string, isSuspended: boolean): Promise<UserProfile> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/users/${id}/status`, {
           method: 'PUT',
@@ -1363,6 +1552,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to update user status' }));
             throw new Error(err.error || 'Failed to update user status');
@@ -1372,8 +1562,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to update user status right now.');
       }
     }
 
@@ -1388,6 +1578,7 @@ export const api = {
 
   async deleteUser(id: string): Promise<boolean> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch(`/api/users/${id}`, {
           method: 'DELETE',
@@ -1395,6 +1586,7 @@ export const api = {
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'Failed to delete user' }));
             throw new Error(err.error || 'Failed to delete user');
@@ -1404,8 +1596,8 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (err.message && !err.message.includes('Unexpected token')) throw err;
-        isStaticHostingMode = true;
+        if (receivedJson) throw err;
+        throw new Error(err?.message || 'Unable to delete user right now.');
       }
     }
 
@@ -1422,19 +1614,22 @@ export const api = {
 
   async getAuditLogs(): Promise<AuditLog[]> {
     if (!isStaticHostingMode) {
+      let receivedJson = false;
       try {
         const res = await fetch('/api/audit-logs', {
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
+          receivedJson = true;
           if (!res.ok) return [];
           return res.json();
         } else {
           isStaticHostingMode = true;
         }
       } catch {
-        isStaticHostingMode = true;
+        if (receivedJson) return [];
+        return [];
       }
     }
 

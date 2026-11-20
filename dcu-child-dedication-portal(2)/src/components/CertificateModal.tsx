@@ -21,12 +21,15 @@ export function CertificateModal({ record, onClose }: CertificateModalProps) {
       ? `${record.fatherName} & ${record.motherName}`
       : record.fatherName || record.motherName || record.parentName || 'Loving Parents';
 
-  // Fellowship & Zone string
-  const fellowshipDisplay = record.selectedFellowship && record.selectedFellowship.toLowerCase() !== 'fellowship'
-    ? (record.selectedFellowship.toLowerCase().includes('fellowship') ? record.selectedFellowship : `${record.selectedFellowship} Fellowship`)
-    : 'Deliverance Church Utawala';
+  // Check if historical archive record (past records preserved dates without zones or fellowships)
+  const isHistorical = (record as any).isHistorical || record.id?.startsWith('HIST-') || !record.selectedZone || record.selectedZone === 'Unallocated';
 
-  const zoneDisplay = record.selectedZone && record.selectedZone !== 'Unallocated' && !record.selectedFellowship?.includes(record.selectedZone)
+  // Fellowship & Zone string (only for new dedicated records)
+  const fellowshipDisplay = !isHistorical && record.selectedFellowship && record.selectedFellowship.toLowerCase() !== 'fellowship'
+    ? (record.selectedFellowship.toLowerCase().includes('fellowship') ? record.selectedFellowship : `${record.selectedFellowship} Fellowship`)
+    : '';
+
+  const zoneDisplay = !isHistorical && record.selectedZone && record.selectedZone !== 'Unallocated' && !record.selectedFellowship?.includes(record.selectedZone)
     ? ` • ${record.selectedZone}`
     : '';
 
@@ -123,9 +126,11 @@ export function CertificateModal({ record, onClose }: CertificateModalProps) {
               <p className="text-sm sm:text-base font-cinzel font-bold text-gray-900 mt-0.5">
                 {parentsDisplay}
               </p>
-              <p className="text-[10px] sm:text-[11px] text-[#aa8222] font-semibold mt-0.5">
-                {fellowshipDisplay}{zoneDisplay}
-              </p>
+              {!isHistorical && (fellowshipDisplay || zoneDisplay) && (
+                <p className="text-[10px] sm:text-[11px] text-[#aa8222] font-semibold mt-0.5">
+                  {fellowshipDisplay}{zoneDisplay}
+                </p>
+              )}
             </div>
           </div>
 

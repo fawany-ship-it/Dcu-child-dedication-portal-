@@ -53,7 +53,13 @@ export const ZONES: ZoneInfo[] = [
       'Theophilus',
       'Pillars',
       'Wisdom',
-      'Mt. Moriah'
+      'Mt. Moriah',
+      'Goshen',
+      'Salem',
+      'Uhai',
+      'Antioch',
+      'Macedonia',
+      'Salem B'
     ]
   },
   {
@@ -63,12 +69,7 @@ export const ZONES: ZoneInfo[] = [
       'Believers',
       'Shiloh',
       'Eden',
-      'Peniel',
-      'Goshen',
-      'Salem',
-      'Uhai',
-      'Antioch',
-      'Macedonia'
+      'Peniel'
     ]
   }
 ];

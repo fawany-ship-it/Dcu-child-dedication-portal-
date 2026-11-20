@@ -68,7 +68,7 @@ function MainApp() {
   }, [user]);
 
   const handleCreateDedication = (newRecord: DedicationRecord) => {
-    setDedications((prev) => [newRecord, ...prev]);
+    setDedications((prev) => [newRecord, ...prev.filter(d => d.id !== newRecord.id)]);
   };
 
   const handleUpdateDedication = async (id: string, updates: Partial<DedicationRecord>) => {
