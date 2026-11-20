@@ -67,6 +67,7 @@ export interface UserProfile {
   name: string;
   role: UserRole;
   assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E';
+  assignedFellowship?: string;
   isApproved: boolean;
   isSuspended?: boolean;
   avatar?: string;
@@ -85,6 +86,7 @@ export interface StaffInvitation {
   name?: string;
   role: 'super_admin' | 'office_admin' | 'pastor' | 'fellowship_leader';
   assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E';
+  assignedFellowship?: string;
   token?: string;
   tokenHash?: string;
   invitedBy: string;
@@ -140,7 +142,7 @@ export interface PastDedicationRecord {
   parentPhone?: string;
   parentEmail?: string;
   selectedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E' | 'Unallocated' | string;
-  selectedFellowship: string;
+  selectedFellowship?: string;
   dedicationYear: number;
   serviceDate: string;
   originalDateRaw?: string;

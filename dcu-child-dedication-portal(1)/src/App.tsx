@@ -68,7 +68,7 @@ function MainApp() {
   }, [user]);
 
   const handleCreateDedication = (newRecord: DedicationRecord) => {
-    setDedications((prev) => [newRecord, ...prev]);
+    setDedications((prev) => [newRecord, ...prev.filter(d => d.id !== newRecord.id)]);
   };
 
   const handleUpdateDedication = async (id: string, updates: Partial<DedicationRecord>) => {
@@ -146,21 +146,22 @@ function MainApp() {
   const isStaffAuthenticated = isStaff;
   const isOfficeAdminAuthorized = isOfficeAdmin || isPastor;
 
-  // Automatically switch tab when administrative staff sign in
+  // Automatically manage tab access based on user role
   useEffect(() => {
     if (user) {
       const normalizedRole = user.role === 'admin' ? 'super_admin' : user.role;
-      if (normalizedRole === 'super_admin' || normalizedRole === 'office_admin' || normalizedRole === 'pastor') {
+      if (normalizedRole === 'fellowship_leader') {
+        // Fellowship leaders cannot access Office Compile, Data Lists, or Past Data List
+        if (currentTab === 'office_compile' || currentTab === 'data_lists' || currentTab === 'past_data') {
+          setCurrentTab('leadership');
+        }
+      } else if (normalizedRole === 'super_admin' || normalizedRole === 'office_admin' || normalizedRole === 'pastor') {
         if (currentTab === 'about' || currentTab === 'home') {
           setCurrentTab('office_compile');
         }
-      } else if (normalizedRole === 'fellowship_leader') {
-        if (currentTab === 'about' || currentTab === 'home') {
-          setCurrentTab('leadership');
-        }
       }
     }
-  }, [user]);
+  }, [user, currentTab]);
 
   const navigateToTrackerWithId = (refName: string) => {
     setTrackerQuery(refName);
@@ -385,17 +386,6 @@ function MainApp() {
                 <Mail className="w-3.5 h-3.5 text-[#d4af37] shrink-0" />
                 dcutawala@gmail.com
               </p>
-              <div className="pt-2">
-                <a
-                  href="/api/export/download-zip"
-                  download="dcu-child-dedication-portal.zip"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#d4af37]/20 hover:bg-[#d4af37]/35 text-[#ffd700] border border-[#d4af37]/50 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02] shadow-sm cursor-pointer"
-                  title="Download complete project ZIP source code for GitHub / Vercel"
-                >
-                  <Download className="w-3.5 h-3.5 shrink-0" />
-                  <span>Download Project ZIP</span>
-                </a>
-              </div>
             </div>
           </div>
 
@@ -404,15 +394,6 @@ function MainApp() {
               &copy; {new Date().getFullYear()} Deliverance Church International Utawala. All Rights Reserved.
             </p>
             <div className="flex flex-wrap items-center gap-3">
-              <a
-                href="/api/export/download-zip"
-                download="dcu-child-dedication-portal.zip"
-                className="text-amber-300 hover:text-amber-200 inline-flex items-center gap-1 font-semibold underline underline-offset-2 transition-colors cursor-pointer"
-              >
-                <Download className="w-3 h-3" />
-                <span>Download Portal Source (.ZIP)</span>
-              </a>
-              <span className="text-[#ffd700] hidden sm:inline">•</span>
               <p className="text-[#ffd700] flex items-center gap-1">
                 Zones A to E Fellowship Care • Church Office Compilation
               </p>
@@ -428,7 +409,7 @@ function MainApp() {
       />
 
       {/* Auth Modal */}
-      <AuthModal />
+      <AuthModal onNavigate={(tab) => setCurrentTab(tab)} />
     </div>
   );
 }

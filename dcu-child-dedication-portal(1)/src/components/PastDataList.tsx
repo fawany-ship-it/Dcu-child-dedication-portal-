@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { PastDedicationRecord, DedicationRecord } from '../types';
-import { ZONES } from '../data/zones';
 import { api } from '../services/api';
 import { 
   Download, Upload, Search, Award, CheckCircle2, Calendar, Phone, 
@@ -239,7 +238,6 @@ export function PastDataList({
     return pastDedications.filter((d) => {
       const recYear = String(d.dedicationYear || d.serviceDate?.slice(0, 4) || '');
       const matchesYear = selectedYear === 'All' || recYear === selectedYear;
-      const matchesZone = selectedZone === 'All' || d.selectedZone === selectedZone;
       const matchesGender = selectedGender === 'All' || d.childGender === selectedGender;
 
       const q = search.toLowerCase().trim();
@@ -251,12 +249,11 @@ export function PastDataList({
         (d.motherName && d.motherName.toLowerCase().includes(q)) ||
         (d.parentName && d.parentName.toLowerCase().includes(q)) ||
         (d.certificateNumber && d.certificateNumber.toLowerCase().includes(q)) ||
-        (d.selectedFellowship && d.selectedFellowship.toLowerCase().includes(q)) ||
         (d.officiatingMinister && d.officiatingMinister.toLowerCase().includes(q)) ||
         (d.serviceDate && d.serviceDate.toLowerCase().includes(q)) ||
         (d.notes && d.notes.toLowerCase().includes(q));
 
-      return matchesYear && matchesZone && matchesGender && matchesSearch;
+      return matchesYear && matchesGender && matchesSearch;
     });
   }, [pastDedications, search, selectedZone, selectedYear, selectedGender]);
 
@@ -807,36 +804,22 @@ export function PastDataList({
 
       {/* Search & Filters */}
       <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-        <div className="md:col-span-5 relative">
+        <div className="md:col-span-8 relative">
           <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by child name, parent, fellowship, minister, or date..."
-            className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
+            placeholder="Search by child name, parent name, minister, or dedication date..."
+            className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden font-medium"
           />
         </div>
 
         <div className="md:col-span-4">
           <select
-            value={selectedZone}
-            onChange={(e) => setSelectedZone(e.target.value)}
-            className="w-full py-2 px-3 text-xs sm:text-sm border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-[#d4af37] outline-hidden"
-          >
-            <option value="All">All Fellowship Zones</option>
-            {ZONES.map((z) => (
-              <option key={z.name} value={z.name}>{z.name}</option>
-            ))}
-            <option value="Unallocated">Historical / Unallocated</option>
-          </select>
-        </div>
-
-        <div className="md:col-span-3">
-          <select
             value={selectedGender}
             onChange={(e) => setSelectedGender(e.target.value)}
-            className="w-full py-2 px-3 text-xs sm:text-sm border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-[#d4af37] outline-hidden"
+            className="w-full py-2 px-3 text-xs sm:text-sm border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-[#d4af37] outline-hidden font-medium"
           >
             <option value="All">All Genders</option>
             <option value="Male">Male</option>
@@ -917,12 +900,6 @@ export function PastDataList({
                       <span className="text-gray-400">Phone:</span> {item.fatherPhone || item.parentPhone || ''} {item.motherPhone ? `• ${item.motherPhone}` : ''}
                     </p>
                   )}
-                  <p>
-                    <span className="text-gray-400 font-semibold">Fellowship / Location:</span>{' '}
-                    <span className="font-medium text-gray-800">
-                      {formatFellowshipDisplay(item.selectedFellowship, item.selectedZone)}
-                    </span>
-                  </p>
                   <p>
                     <span className="text-gray-400 font-semibold">Dedicated On:</span>{' '}
                     <strong className="text-[#2a170e] font-mono bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60">
@@ -1406,8 +1383,6 @@ export function PastDataList({
                         <th className="p-2.5">Original Dedication Date</th>
                         <th className="p-2.5">Child Full Name</th>
                         <th className="p-2.5">Parents / Family</th>
-                        <th className="p-2.5">Fellowship / Location</th>
-                        <th className="p-2.5">Zone</th>
                         <th className="p-2.5">Officiating Minister</th>
                         <th className="p-2.5">Certificate No</th>
                       </tr>
@@ -1426,12 +1401,6 @@ export function PastDataList({
                           <td className="p-2.5 font-bold text-gray-900">{row.childName}</td>
                           <td className="p-2.5 text-gray-700">
                             {row.parentName || `${row.fatherName || ''} & ${row.motherName || ''}`.trim() || '-'}
-                          </td>
-                          <td className="p-2.5 font-medium text-gray-800">
-                            {row.selectedFellowship}
-                          </td>
-                          <td className="p-2.5 text-gray-500">
-                            {row.selectedZone && row.selectedZone !== 'Unallocated' ? row.selectedZone : '-'}
                           </td>
                           <td className="p-2.5 text-gray-600">
                             {row.officiatingMinister || '-'}
@@ -1626,34 +1595,7 @@ export function PastDataList({
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">
-                    Fellowship / Residence / Cell
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.selectedFellowship || ''}
-                    onChange={(e) => setFormData({ ...formData, selectedFellowship: e.target.value })}
-                    placeholder="e.g. Deliverance Church Utawala, Doxa, Kincar"
-                    className="w-full px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
-                  />
-                </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">
-                    Fellowship Zone
-                  </label>
-                  <select
-                    value={formData.selectedZone || ''}
-                    onChange={(e) => setFormData({ ...formData, selectedZone: e.target.value as any })}
-                    className="w-full px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
-                  >
-                    <option value="">None / Historical Unallocated</option>
-                    {ZONES.map((z) => (
-                      <option key={z.name} value={z.name}>{z.name}</option>
-                    ))}
-                  </select>
-                </div>
 
                 <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">

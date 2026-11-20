@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, Baby, CheckCircle, Clock, Calendar, Church, Shield, Printer, AlertCircle, Phone, MapPin, UserCheck, Building2, Award } from 'lucide-react';
 import { DedicationRecord } from '../types';
 import { api } from '../services/api';
@@ -24,6 +24,39 @@ export function StatusTracker({ dedications, initialSearchQuery = '', onOpenCert
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [trackedRecord, setTrackedRecord] = useState<any | null>(null);
+  const [deviceSubmissions, setDeviceSubmissions] = useState<any[]>([]);
+
+  const handleTrackItem = (id: string, phone?: string) => {
+    setRefId(id);
+    if (phone) setVerifyPhone(phone);
+    setLoading(true);
+    setError('');
+    api.trackDedication(id, phone).then((res) => {
+      setTrackedRecord(res);
+    }).catch((err: any) => {
+      setError(err?.message || 'Application not found.');
+    }).finally(() => {
+      setLoading(false);
+    });
+  };
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('dcu_parent_recent_submissions') || '[]');
+      if (Array.isArray(stored)) {
+        setDeviceSubmissions(stored);
+      }
+    } catch {
+      // localStorage restricted
+    }
+  }, []);
+
+  useEffect(() => {
+    if (initialSearchQuery) {
+      setRefId(initialSearchQuery);
+      handleTrackItem(initialSearchQuery);
+    }
+  }, [initialSearchQuery]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,32 +152,44 @@ export function StatusTracker({ dedications, initialSearchQuery = '', onOpenCert
         )}
       </div>
 
-      {/* Logged in Parent Submissions Quick Selector */}
-      {user && dedications.length > 0 && (
-        <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-3">
-          <h3 className="text-xs font-bold uppercase text-[#2a170e] tracking-wider flex items-center gap-2">
-            <Baby className="w-4 h-4 text-[#d4af37]" />
-            Your Authorized Submissions
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {dedications.map((d) => (
+      {/* Submitted Registrations Quick Selector (Available to all parents with or without login) */}
+      {(deviceSubmissions.length > 0 || (user && dedications.length > 0)) && (
+        <div className="bg-white p-6 rounded-3xl border-2 border-[#d4af37]/40 shadow-sm space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h3 className="text-xs sm:text-sm font-bold uppercase text-[#2a170e] tracking-wider flex items-center gap-2">
+              <Baby className="w-4 h-4 text-[#d4af37]" />
+              Your Submitted Registrations on this Device ({deviceSubmissions.length > 0 ? deviceSubmissions.length : dedications.length})
+            </h3>
+            <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+              Parent Self-Service • No Login Required
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {(deviceSubmissions.length > 0 ? deviceSubmissions : dedications).map((d: any) => (
               <button
                 key={d.id}
-                onClick={() => {
-                  setRefId(d.id);
-                  setVerifyPhone(d.parentPhone || d.fatherPhone || d.motherPhone);
-                  setTrackedRecord(d);
-                }}
-                className="p-3 rounded-xl border border-amber-200 bg-amber-50/50 hover:bg-amber-100/50 text-left transition-all cursor-pointer flex items-center justify-between"
+                onClick={() => handleTrackItem(d.id, d.phone || d.parentPhone || d.fatherPhone || d.motherPhone)}
+                className="p-3.5 rounded-2xl border border-amber-200 bg-amber-50/60 hover:bg-amber-100/70 text-left transition-all cursor-pointer flex items-center justify-between group shadow-xs"
               >
                 <div>
-                  <span className="font-mono text-[10px] font-bold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded">
-                    {d.id}
-                  </span>
-                  <p className="font-bold text-gray-900 text-xs mt-1">{d.childName}</p>
-                  <p className="text-[10px] text-gray-500">{d.selectedZone} • {d.status}</p>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded-md">
+                      {d.id}
+                    </span>
+                    {d.serviceDate && (
+                      <span className="text-[10px] text-gray-500 font-sans">
+                        Sunday: {d.serviceDate}
+                      </span>
+                    )}
+                  </div>
+                  <p className="font-bold text-gray-900 text-sm mt-1">{d.childName}</p>
+                  <p className="text-[10px] text-[#aa8222] font-semibold mt-0.5">
+                    Click to view live verification & status →
+                  </p>
                 </div>
-                <span className="text-xs font-bold text-[#2a170e]">Select →</span>
+                <span className="text-xs font-bold text-[#2a170e] group-hover:translate-x-1 transition-transform">
+                  Track →
+                </span>
               </button>
             ))}
           </div>
