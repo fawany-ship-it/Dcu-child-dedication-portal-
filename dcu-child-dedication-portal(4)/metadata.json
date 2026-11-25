@@ -1,0 +1,6 @@
+{
+  "name": "Deliverance Church International Utawala - Child Dedication Portal",
+  "description": "Official Child Dedication Registration and Pastoral Management Portal for Deliverance Church International Utawala with Google and email login, secure records retention, and fellowship allocation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
