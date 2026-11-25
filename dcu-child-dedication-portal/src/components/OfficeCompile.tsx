@@ -17,7 +17,9 @@ interface OfficeCompileProps {
 }
 
 export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertificate }: OfficeCompileProps) {
-  const { user, isSuperAdmin } = useAuth();
+  const { user, firebaseUser, connectCloudSync, isSuperAdmin } = useAuth();
+  const [cloudConnecting, setCloudConnecting] = useState(false);
+  const [cloudError, setCloudError] = useState('');
 
   const [selectedZone, setSelectedZone] = useState('All');
   const [selectedMonth, setSelectedMonth] = useState('All');
@@ -104,7 +106,7 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
       fetchInvitations();
       fetchAuditLogs();
     }
-  }, [isSuperAdmin]);
+  }, [isSuperAdmin, firebaseUser]);
 
   // Categorize dedication records
   const leaderApprovedRecords = dedications.filter(d => d.leadershipConfirmed && !d.officeApproved);
@@ -337,6 +339,42 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
 
   return (
     <div className="space-y-6 pb-12">
+      {/* Cloud Sync Banner if signed in via Email+Password only */}
+      {user && !firebaseUser && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 to-amber-100 border-2 border-[#d4af37] text-[#2a170e] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-xs sm:text-sm text-[#2a170e]">
+                Action Required: Connect Google Cloud Sync
+              </p>
+              <p className="text-xs text-amber-950/90 mt-0.5">
+                Sign in with your Google account ({user.email}) once so parent forms, staff invitations, and login timestamps sync live across all devices.
+              </p>
+              {cloudError && <p className="text-xs text-red-700 font-bold mt-1">{cloudError}</p>}
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={cloudConnecting}
+            onClick={async () => {
+              setCloudError('');
+              setCloudConnecting(true);
+              try {
+                await connectCloudSync();
+              } catch (err: any) {
+                setCloudError(err?.message || 'Unable to connect Google Cloud Sync.');
+              } finally {
+                setCloudConnecting(false);
+              }
+            }}
+            className="px-4 py-2.5 bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] border border-[#d4af37] font-bold text-xs rounded-xl transition-all shrink-0 cursor-pointer shadow-md whitespace-nowrap"
+          >
+            {cloudConnecting ? 'Connecting...' : 'Connect Google Cloud Sync'}
+          </button>
+        </div>
+      )}
+
       {/* Office Header */}
       <div className="bg-gradient-to-r from-[#2a170e] via-[#331c11] to-[#221107] text-white p-6 sm:p-8 rounded-3xl shadow-xl border-2 border-[#d4af37]/40 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -928,24 +966,47 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                           {new Date(inv.expiresAt).toLocaleDateString()}
                         </td>
                         <td className="py-3.5 px-4">
-                          {inv.status === 'accepted' ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-md border border-emerald-300">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                              Accepted & Logged On
-                            </span>
-                          ) : inv.status === 'revoked' ? (
-                            <span className="text-[11px] font-bold text-red-800 bg-red-100 px-2.5 py-1 rounded-md">Revoked</span>
-                          ) : inv.status === 'expired' ? (
-                            <span className="text-[11px] font-bold text-gray-600 bg-gray-100 px-2.5 py-1 rounded-md">Expired</span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-md border border-amber-300">
-                              <Clock className="w-3 h-3 text-amber-600" />
-                              Pending (Not Yet Logged On)
-                            </span>
-                          )}
+                          {(() => {
+                            const matchedUser = usersList.find(
+                              (u) => u.email.toLowerCase() === inv.email.toLowerCase()
+                            );
+                            const isLoggedInUser =
+                              inv.status === 'accepted' || Boolean(matchedUser?.lastLoginAt);
+                            if (isLoggedInUser) {
+                              return (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-md border border-emerald-300">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                                  Accepted &amp; Logged On
+                                </span>
+                              );
+                            }
+                            if (inv.status === 'revoked') {
+                              return (
+                                <span className="text-[11px] font-bold text-red-800 bg-red-100 px-2.5 py-1 rounded-md">
+                                  Revoked
+                                </span>
+                              );
+                            }
+                            if (inv.status === 'expired') {
+                              return (
+                                <span className="text-[11px] font-bold text-gray-600 bg-gray-100 px-2.5 py-1 rounded-md">
+                                  Expired
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-md border border-amber-300">
+                                <Clock className="w-3 h-3 text-amber-600" />
+                                Pending (Not Yet Logged On)
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="py-3.5 px-4 text-right">
-                          {inv.status === 'pending' && (
+                          {inv.status === 'pending' &&
+                            !usersList.some(
+                              (u) => u.email.toLowerCase() === inv.email.toLowerCase() && u.lastLoginAt
+                            ) && (
                             <button
                               onClick={() => handleRevokeInvite(inv.id)}
                               className="text-[10px] bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 px-2.5 py-1 rounded-md font-bold cursor-pointer"
@@ -1138,6 +1199,27 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                   <Copy className="w-4 h-4" />
                   {copiedToken ? 'Copied to Clipboard!' : 'Copy Invitation Link'}
                 </button>
+
+                {createdInviteResult.inviteUrl.includes('ais-dev-') && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-[11px] text-amber-950 space-y-2">
+                    <p className="leading-relaxed">
+                      <strong>Sharing to someone&apos;s phone?</strong> The <code className="font-mono">ais-dev-</code> link above is restricted to your personal AI Studio developer Google account. Share the public preview link instead (after publishing/sharing your latest update):
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sharedUrl = createdInviteResult.inviteUrl.replace('ais-dev-', 'ais-pre-');
+                        navigator.clipboard.writeText(sharedUrl);
+                        setCopiedToken(true);
+                        setTimeout(() => setCopiedToken(false), 2000);
+                      }}
+                      className="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      Copy Public Shared Phone Link (ais-pre)
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <form onSubmit={handleCreateInviteSubmit} className="space-y-4">

@@ -128,8 +128,15 @@ export function ParentForm({ onSubmitSuccess, onNavigateToTracker }: ParentFormP
             serviceDate: savedRecord.serviceDate,
             phone: savedRecord.parentPhone || savedRecord.fatherPhone || savedRecord.motherPhone
           },
-          ...stored.filter((r: any) => r.id !== savedRecord.id)
-        ].slice(0, 10);
+          ...stored.filter(
+            (r: any) =>
+              !(
+                r.id === savedRecord.id &&
+                String(r.childName || '').toLowerCase().trim() ===
+                  savedRecord.childName.toLowerCase().trim()
+              )
+          )
+        ].slice(0, 15);
         localStorage.setItem('dcu_parent_recent_submissions', JSON.stringify(updated));
       } catch {
         // localStorage restricted

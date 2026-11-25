@@ -475,7 +475,7 @@ async function startServer() {
       }
 
       saveUsers(users);
-      markInvitationUsed(inv.tokenHash || '');
+      markInvitationUsed(inv.tokenHash || '', inv);
 
       writeAuditLog({
         eventType: 'STAFF_INVITATION_ACCEPTED_VIA_GOOGLE',
@@ -621,7 +621,7 @@ async function startServer() {
     }
 
     saveUsers(users);
-    markInvitationUsed(inv.tokenHash || '');
+    markInvitationUsed(inv.tokenHash || '', inv);
 
     writeAuditLog({
       eventType: 'STAFF_INVITATION_ACCEPTED',
@@ -654,20 +654,12 @@ async function startServer() {
       return res.status(400).json({ error: 'Token is required' });
     }
 
-    const invites = loadInvitations();
-    const inv = invites.find(i => {
-      const verifyRes = verifyInvitation(token, i.email);
-      return verifyRes.valid;
-    });
-
-    if (!inv) {
-      return res.status(400).json({ error: 'Invitation is invalid, expired, or already used.' });
+    const verifyRes = verifyInvitation(token, email || undefined);
+    if (!verifyRes.valid || !verifyRes.invitation) {
+      return res.status(400).json({ error: verifyRes.reason || 'Invitation is invalid, expired, or already used.' });
     }
 
-    if (email && inv.email.toLowerCase() !== email.toLowerCase()) {
-      return res.status(400).json({ error: `This invitation was issued specifically for ${inv.email}.` });
-    }
-
+    const inv = verifyRes.invitation;
     res.json({
       email: inv.email,
       name: inv.name,
@@ -806,9 +798,16 @@ async function startServer() {
       }
       let filtered = list.filter(d => d.selectedZone === zone);
       if (req.user!.assignedFellowship) {
-        const targetFellowship = req.user!.assignedFellowship.toLowerCase().trim();
+        const targetFellowship = req.user!.assignedFellowship
+          .replace(/\s+(fellowship|micro[\s-]*church)$/i, '')
+          .toLowerCase()
+          .trim();
         filtered = filtered.filter(
-          d => (d.selectedFellowship || '').toLowerCase().trim() === targetFellowship
+          d =>
+            (d.selectedFellowship || '')
+              .replace(/\s+(fellowship|micro[\s-]*church)$/i, '')
+              .toLowerCase()
+              .trim() === targetFellowship
         );
       }
       return res.json(filtered);
@@ -841,10 +840,15 @@ async function startServer() {
 
     const dedications = loadDedications();
     const currentYear = new Date().getFullYear();
+    const clientProvidedId =
+      typeof body.id === 'string' && /^[a-zA-Z0-9_\-]{3,128}$/.test(body.id)
+        ? body.id
+        : null;
+    const generatedUniqueId = `DED-${currentYear}-${Date.now().toString(36).toUpperCase().slice(-5)}${Math.random().toString(36).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4).padEnd(4, 'X')}`;
 
     // STRICT SANITIZATION: Never trust client-provided approval or certificate flags on public submission!
     const newRecord: DedicationRecord = {
-      id: `DED-${currentYear}-${String(dedications.length + 1).padStart(3, '0')}`,
+      id: clientProvidedId || generatedUniqueId,
       childName: String(body.childName).trim(),
       childDob: String(body.childDob).trim(),
       childGender: body.childGender === 'Female' ? 'Female' : 'Male',
@@ -897,7 +901,7 @@ async function startServer() {
   });
 
   // 3. Status Tracker Endpoint (Public & Privacy-Preserving)
-  // Requires child ID AND matching phone number verification so unauthorized parties cannot enumerate families.
+  // Returns safe tracking projections for all matching children (e.g. siblings under same phone)
   app.get('/api/dedications/track', rateLimit(15), (req: Request, res: Response) => {
     const id = String(req.query.id || '').trim();
     const phone = String(req.query.phone || '').trim().replace(/\s+/g, '');
@@ -910,45 +914,43 @@ async function startServer() {
     const queryStr = id.toLowerCase();
     const cleanDigits = (phone || id).replace(/[^\d]/g, '');
 
-    const record = dedications.find(d => {
-      // Match by Dedication ID or Certificate Number
+    const matches = dedications.filter(d => {
       if (d.id.toLowerCase() === queryStr) return true;
       if (d.certificateNumber && d.certificateNumber.toLowerCase() === queryStr) return true;
-
-      // Match by Child Full Name (min 3 chars)
       if (queryStr.length >= 3 && d.childName.toLowerCase().includes(queryStr)) return true;
 
-      // Match by Phone (min 7 digits)
       if (cleanDigits.length >= 7) {
         const fClean = (d.fatherPhone || '').replace(/[^\d]/g, '');
         const mClean = (d.motherPhone || '').replace(/[^\d]/g, '');
         const pClean = (d.parentPhone || '').replace(/[^\d]/g, '');
-        if (fClean.endsWith(cleanDigits) || cleanDigits.endsWith(fClean) ||
-            mClean.endsWith(cleanDigits) || cleanDigits.endsWith(mClean) ||
-            pClean.endsWith(cleanDigits) || cleanDigits.endsWith(pClean)) {
+        if ((fClean && (fClean.endsWith(cleanDigits) || cleanDigits.endsWith(fClean))) ||
+            (mClean && (mClean.endsWith(cleanDigits) || cleanDigits.endsWith(mClean))) ||
+            (pClean && (pClean.endsWith(cleanDigits) || cleanDigits.endsWith(pClean)))) {
           return true;
         }
       }
       return false;
     });
 
-    if (!record) {
+    if (matches.length === 0) {
       return res.status(404).json({ error: 'Record not found. Please verify your Reference ID, Child Name, or Phone Number.' });
     }
 
-    // Phone verification check (if explicit verification phone was provided and id was not a phone)
-    if (phone && phone !== id) {
-      const pDigits = phone.replace(/[^\d]/g, '');
-      const matchFather = (record.fatherPhone || '').replace(/[^\d]/g, '').includes(pDigits);
-      const matchMother = (record.motherPhone || '').replace(/[^\d]/g, '').includes(pDigits);
-      const matchParent = (record.parentPhone || '').replace(/[^\d]/g, '').includes(pDigits);
-      if (!matchFather && !matchMother && !matchParent) {
-        return res.status(403).json({ error: 'Verification failed: provided phone does not match record.' });
-      }
+    const verifiedMatches = (phone && phone !== id)
+      ? matches.filter((record) => {
+          const pDigits = phone.replace(/[^\d]/g, '');
+          const matchFather = (record.fatherPhone || '').replace(/[^\d]/g, '').includes(pDigits);
+          const matchMother = (record.motherPhone || '').replace(/[^\d]/g, '').includes(pDigits);
+          const matchParent = (record.parentPhone || '').replace(/[^\d]/g, '').includes(pDigits);
+          return matchFather || matchMother || matchParent;
+        })
+      : matches;
+
+    if (verifiedMatches.length === 0) {
+      return res.status(403).json({ error: 'Verification failed: provided phone does not match record.' });
     }
 
-    // Return safe public tracking payload without sensitive PII
-    res.json({
+    const sanitizedMatches = verifiedMatches.map((record) => ({
       id: record.id,
       childName: record.childName,
       status: record.status,
@@ -961,6 +963,11 @@ async function startServer() {
       selectedFellowship: record.selectedFellowship,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt
+    }));
+
+    res.json({
+      ...sanitizedMatches[0],
+      matches: sanitizedMatches
     });
   });
 
@@ -1402,10 +1409,12 @@ async function startServer() {
       details: { invitedEmail: email, role, assignedZone, assignedFellowship }
     });
 
+    const host = req.get('x-forwarded-host') || req.get('host');
+    const proto = req.get('x-forwarded-proto') || req.protocol;
     res.status(201).json({
       invitation,
       rawToken,
-      inviteUrl: `${req.protocol}://${req.get('host')}/?invite=${rawToken}&email=${encodeURIComponent(email)}`
+      inviteUrl: `${proto}://${host}/?invite=${encodeURIComponent(rawToken)}&email=${encodeURIComponent(email.toLowerCase().trim())}`
     });
   });
 

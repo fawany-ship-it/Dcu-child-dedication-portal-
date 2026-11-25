@@ -1,0 +1,207 @@
+{
+  "entities": {
+    "Dedication": {
+      "title": "Dedication",
+      "description": "Confidential child dedication application submitted by parents for fellowship endorsement and church office compilation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 5, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "childName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "childDob": { "type": "string", "minLength": 4, "maxLength": 32 },
+        "childGender": { "type": "string", "enum": ["Male", "Female"] },
+        "childCountyOfBirth": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "childPlaceOfBirth": { "type": "string", "maxLength": 120 },
+        "fatherName": { "type": "string", "maxLength": 160 },
+        "fatherPhone": { "type": "string", "maxLength": 40 },
+        "fatherEmail": { "type": "string", "maxLength": 160 },
+        "motherName": { "type": "string", "maxLength": 160 },
+        "motherPhone": { "type": "string", "maxLength": 40 },
+        "motherEmail": { "type": "string", "maxLength": 160 },
+        "parentName": { "type": "string", "maxLength": 200 },
+        "parentPhone": { "type": "string", "maxLength": 40 },
+        "parentEmail": { "type": "string", "maxLength": 160 },
+        "parentRelationship": { "type": "string", "maxLength": 60 },
+        "isInFellowship": { "type": "boolean" },
+        "selectedZone": {
+          "type": "string",
+          "enum": ["Zone A", "Zone B", "Zone C", "Zone D", "Zone E", "Unallocated"]
+        },
+        "selectedFellowship": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "residentialLocation": { "type": "string", "maxLength": 240 },
+        "dataConsent": { "type": "boolean" },
+        "status": {
+          "type": "string",
+          "enum": ["submitted", "fellowship_confirmed", "office_approved", "compiled", "completed"]
+        },
+        "serviceDate": { "type": "string", "maxLength": 80 },
+        "leadershipConfirmed": { "type": "boolean" },
+        "fellowshipLeaderName": { "type": "string", "maxLength": 160 },
+        "fellowshipConfirmedAt": { "type": "string", "maxLength": 64 },
+        "fellowshipNotes": { "type": "string", "maxLength": 500 },
+        "officeApproved": { "type": "boolean" },
+        "officeAdminName": { "type": "string", "maxLength": 160 },
+        "officeConfirmedAt": { "type": "string", "maxLength": 64 },
+        "officeNotes": { "type": "string", "maxLength": 500 },
+        "certificateIssued": { "type": "boolean" },
+        "certificateNumber": { "type": "string", "maxLength": 80 },
+        "submittedBy": { "type": "string", "maxLength": 160 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "childName",
+        "childDob",
+        "childGender",
+        "childCountyOfBirth",
+        "isInFellowship",
+        "selectedZone",
+        "selectedFellowship",
+        "dataConsent",
+        "status",
+        "leadershipConfirmed",
+        "officeApproved",
+        "certificateIssued",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DedicationStatus": {
+      "title": "DedicationStatus",
+      "description": "PII-isolated non-sensitive status projection enabling login-free Parent Self-Service status tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 5, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "childName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "childNameLower": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "selectedZone": {
+          "type": "string",
+          "enum": ["Zone A", "Zone B", "Zone C", "Zone D", "Zone E", "Unallocated"]
+        },
+        "selectedFellowship": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "status": {
+          "type": "string",
+          "enum": ["submitted", "fellowship_confirmed", "office_approved", "compiled", "completed"]
+        },
+        "serviceDate": { "type": "string", "maxLength": 80 },
+        "leadershipConfirmed": { "type": "boolean" },
+        "officeApproved": { "type": "boolean" },
+        "certificateIssued": { "type": "boolean" },
+        "certificateNumber": { "type": "string", "maxLength": 80 },
+        "phoneHashes": { "type": "array", "maxLength": 4 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "childName",
+        "childNameLower",
+        "selectedZone",
+        "selectedFellowship",
+        "status",
+        "leadershipConfirmed",
+        "officeApproved",
+        "certificateIssued",
+        "phoneHashes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StaffRole": {
+      "title": "StaffRole",
+      "description": "Authorized leadership, pastoral, and office staff directory with zone and micro-church fellowship placement.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "email": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "role": {
+          "type": "string",
+          "enum": ["super_admin", "office_admin", "pastor", "fellowship_leader"]
+        },
+        "assignedZone": { "type": "string", "maxLength": 40 },
+        "assignedFellowship": { "type": "string", "maxLength": 100 },
+        "isApproved": { "type": "boolean" },
+        "isSuspended": { "type": "boolean" },
+        "authProvider": { "type": "string", "enum": ["google", "email"] },
+        "avatar": { "type": "string", "maxLength": 400 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastLoginAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "email", "name", "role", "isApproved", "isSuspended", "authProvider", "createdAt"]
+    },
+    "PastDedication": {
+      "title": "PastDedication",
+      "description": "Historical infant dedication register (2009 to present) accessible only to office administration and pastors.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 3, "maxLength": 80, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "childName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "childDob": { "type": "string", "maxLength": 32 },
+        "childGender": { "type": "string", "enum": ["Male", "Female"] },
+        "childCountyOfBirth": { "type": "string", "maxLength": 80 },
+        "fatherName": { "type": "string", "maxLength": 160 },
+        "fatherPhone": { "type": "string", "maxLength": 40 },
+        "motherName": { "type": "string", "maxLength": 160 },
+        "motherPhone": { "type": "string", "maxLength": 40 },
+        "parentName": { "type": "string", "maxLength": 200 },
+        "parentPhone": { "type": "string", "maxLength": 40 },
+        "dedicationYear": { "type": "number" },
+        "serviceDate": { "type": "string", "maxLength": 64 },
+        "originalDateRaw": { "type": "string", "maxLength": 64 },
+        "certificateNumber": { "type": "string", "maxLength": 80 },
+        "certificateIssued": { "type": "boolean" },
+        "officiatingMinister": { "type": "string", "maxLength": 160 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "archivalSource": { "type": "string", "maxLength": 160 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "childName", "dedicationYear", "serviceDate", "certificateNumber", "certificateIssued", "createdAt"]
+    },
+    "StaffInvitation": {
+      "title": "StaffInvitation",
+      "description": "Audit and revocation registry of staff invitations issued by Super Administrators.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 3, "maxLength": 80, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "name": { "type": "string", "maxLength": 160 },
+        "role": { "type": "string", "enum": ["super_admin", "office_admin", "pastor", "fellowship_leader"] },
+        "assignedZone": { "type": "string", "maxLength": 40 },
+        "assignedFellowship": { "type": "string", "maxLength": 100 },
+        "invitedBy": { "type": "string", "maxLength": 160 },
+        "invitedByEmail": { "type": "string", "maxLength": 160 },
+        "status": { "type": "string", "enum": ["pending", "accepted", "revoked", "expired"] },
+        "expiresAt": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "usedAt": { "type": "string", "maxLength": 64 },
+        "revokedAt": { "type": "string", "maxLength": 64 },
+        "revokedBy": { "type": "string", "maxLength": 160 }
+      },
+      "required": ["id", "email", "role", "invitedBy", "invitedByEmail", "status", "expiresAt", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/dedications/{dedicationId}": {
+      "schema": { "$ref": "#/entities/Dedication" },
+      "description": "Confidential child dedication applications stored across devices."
+    },
+    "/dedication_status/{dedicationId}": {
+      "schema": { "$ref": "#/entities/DedicationStatus" },
+      "description": "PII-free public status projection for login-free parent tracking."
+    },
+    "/staff_roles/{staffEmail}": {
+      "schema": { "$ref": "#/entities/StaffRole" },
+      "description": "Authorized staff, pastors, office admins, and zone/fellowship leaders."
+    },
+    "/past_dedications/{pastId}": {
+      "schema": { "$ref": "#/entities/PastDedication" },
+      "description": "Historical dedicated children archive (2009 to present)."
+    },
+    "/invitations/{invitationId}": {
+      "schema": { "$ref": "#/entities/StaffInvitation" },
+      "description": "Staff invitation records and revocation status."
+    }
+  }
+}

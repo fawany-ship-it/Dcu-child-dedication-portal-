@@ -315,6 +315,39 @@ export function saveInvitations(invites: StaffInvitation[]) {
   }
 }
 
+interface SignedInvitePayload {
+  id: string;
+  email: string;
+  name?: string;
+  role: 'super_admin' | 'office_admin' | 'pastor' | 'fellowship_leader';
+  assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E';
+  assignedFellowship?: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+function signInviteToken(data: SignedInvitePayload): string {
+  const b64 = Buffer.from(JSON.stringify(data), 'utf-8').toString('base64url');
+  const sig = crypto.createHmac('sha256', SERVER_SECRET).update(`DCUINV1.${b64}`).digest('base64url');
+  return `DCUINV1.${b64}.${sig}`;
+}
+
+export function verifySignedInviteToken(rawToken: string): SignedInvitePayload | null {
+  try {
+    const clean = (rawToken || '').trim();
+    const parts = clean.split('.');
+    if (parts.length !== 3 || parts[0] !== 'DCUINV1') return null;
+    const [, b64, sig] = parts;
+    const expected = crypto.createHmac('sha256', SERVER_SECRET).update(`DCUINV1.${b64}`).digest('base64url');
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+    return JSON.parse(Buffer.from(b64, 'base64url').toString('utf-8')) as SignedInvitePayload;
+  } catch {
+    return null;
+  }
+}
+
 export function createInvitation(params: {
   email: string;
   name?: string;
@@ -324,15 +357,30 @@ export function createInvitation(params: {
   invitedBy: string;
   invitedByEmail: string;
 }): { invitation: StaffInvitation; rawToken: string } {
-  const rawToken = generateSecureToken(24);
-  const tokenHash = hashToken(rawToken);
+  const id = `inv-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const createdAt = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+  const cleanEmail = params.email.toLowerCase().trim();
+
+  const signedPayload: SignedInvitePayload = {
+    id,
+    email: cleanEmail,
+    name: params.name?.trim() || undefined,
+    role: params.role,
+    assignedZone: params.assignedZone,
+    assignedFellowship: params.assignedFellowship?.trim() || undefined,
+    createdAt,
+    expiresAt
+  };
+
+  const rawToken = signInviteToken(signedPayload);
+  const tokenHash = hashToken(rawToken);
 
   const invites = loadInvitations();
 
   // Invalidate any prior pending invitations for this email
   invites.forEach(inv => {
-    if (inv.email.toLowerCase() === params.email.toLowerCase() && inv.status === 'pending') {
+    if (inv.email.toLowerCase() === cleanEmail && inv.status === 'pending') {
       inv.status = 'revoked';
       inv.revokedAt = new Date().toISOString();
       inv.revokedBy = 'Superceded by new invitation';
@@ -340,8 +388,8 @@ export function createInvitation(params: {
   });
 
   const invitation: StaffInvitation = {
-    id: `inv-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
-    email: params.email.toLowerCase(),
+    id,
+    email: cleanEmail,
     name: params.name,
     role: params.role,
     assignedZone: params.assignedZone,
@@ -349,7 +397,7 @@ export function createInvitation(params: {
     tokenHash,
     invitedBy: params.invitedBy,
     invitedByEmail: params.invitedByEmail,
-    createdAt: new Date().toISOString(),
+    createdAt,
     expiresAt,
     status: 'pending'
   };
@@ -360,16 +408,40 @@ export function createInvitation(params: {
   return { invitation: { ...invitation, token: rawToken }, rawToken };
 }
 
-export function verifyInvitation(rawToken: string, userEmail: string): { valid: boolean; reason?: string; invitation?: StaffInvitation } {
+export function verifyInvitation(rawToken: string, userEmail?: string): { valid: boolean; reason?: string; invitation?: StaffInvitation } {
   const cleanToken = (rawToken || '').trim();
   const cleanEmail = (userEmail || '').trim();
   if (!cleanToken) return { valid: false, reason: 'Invitation token is missing' };
+
   const tokenHash = hashToken(cleanToken);
   const invites = loadInvitations();
-  const invitation = invites.find(inv => inv.tokenHash === tokenHash);
+  let invitation = invites.find(inv => inv.tokenHash === tokenHash);
 
+  // If not found locally (e.g. created on another container/instance), verify signed DCUINV1 token
   if (!invitation) {
-    return { valid: false, reason: 'Invalid invitation token' };
+    const signed = verifySignedInviteToken(cleanToken);
+    if (!signed) {
+      return { valid: false, reason: 'Invalid invitation token' };
+    }
+    const existingById = invites.find(inv => inv.id === signed.id);
+    if (existingById) {
+      invitation = existingById;
+    } else {
+      invitation = {
+        id: signed.id,
+        email: signed.email,
+        name: signed.name,
+        role: signed.role,
+        assignedZone: signed.assignedZone,
+        assignedFellowship: signed.assignedFellowship,
+        tokenHash,
+        invitedBy: 'system',
+        invitedByEmail: 'admin',
+        createdAt: signed.createdAt,
+        expiresAt: signed.expiresAt,
+        status: 'pending'
+      };
+    }
   }
 
   if (invitation.status === 'revoked') {
@@ -386,7 +458,7 @@ export function verifyInvitation(rawToken: string, userEmail: string): { valid: 
     return { valid: false, reason: 'This invitation has expired' };
   }
 
-  if (invitation.email.toLowerCase() !== cleanEmail.toLowerCase()) {
+  if (cleanEmail && invitation.email.toLowerCase() !== cleanEmail.toLowerCase()) {
     return { 
       valid: false, 
       reason: `Invitation is restricted to email: ${invitation.email}. Authenticated email (${cleanEmail}) does not match.` 
@@ -396,10 +468,20 @@ export function verifyInvitation(rawToken: string, userEmail: string): { valid: 
   return { valid: true, invitation };
 }
 
-export function markInvitationUsed(tokenHash: string): boolean {
+export function markInvitationUsed(tokenHash: string, fallbackInvite?: StaffInvitation): boolean {
   const invites = loadInvitations();
-  const invitation = invites.find(inv => inv.tokenHash === tokenHash);
-  if (!invitation) return false;
+  const invitation = invites.find(inv => inv.tokenHash === tokenHash || (fallbackInvite && inv.id === fallbackInvite.id));
+  if (!invitation) {
+    if (!fallbackInvite) return false;
+    invites.unshift({
+      ...fallbackInvite,
+      tokenHash,
+      status: 'accepted',
+      usedAt: new Date().toISOString()
+    });
+    saveInvitations(invites);
+    return true;
+  }
 
   invitation.status = 'accepted';
   invitation.usedAt = new Date().toISOString();

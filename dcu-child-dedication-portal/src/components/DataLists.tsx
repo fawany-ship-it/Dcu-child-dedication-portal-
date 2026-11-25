@@ -3,8 +3,8 @@ import * as XLSX from 'xlsx';
 import { DedicationRecord } from '../types';
 import { ZONES, MONTHLY_DEDICATION_DATES } from '../data/zones';
 import { 
-  Download, Upload, Search, Filter, Baby, Phone, CheckCircle2, 
-  Clock, Award, Trash2, Edit3, Shield
+  Download, Upload, Search, CheckCircle2, 
+  Award, Trash2, AlertCircle, X
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -24,13 +24,18 @@ export function DataLists({
   onBulkImport,
   onOpenCertificate
 }: DataListsProps) {
-  const { user, isAdmin } = useAuth();
+  const { user, firebaseUser, connectCloudSync, isAdmin } = useAuth();
 
   const [search, setSearch] = useState('');
   const [selectedZone, setSelectedZone] = useState('All');
   const [selectedStatus, setSelectedStatus] = useState('All');
   const [selectedDate, setSelectedDate] = useState('All');
   const [isImporting, setIsImporting] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<DedicationRecord | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState('');
+  const [actionSuccess, setActionSuccess] = useState('');
+  const [cloudConnecting, setCloudConnecting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Active records: all records that are not yet marked as 'completed', newest first
@@ -150,9 +155,21 @@ export function DataLists({
     reader.readAsBinaryString(file);
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (confirm(`Are you sure you want to delete ${name}'s dedication record?`)) {
-      await onDeleteDedication(id);
+  const handleConfirmDelete = async () => {
+    if (!pendingDelete) return;
+    const target = pendingDelete;
+    setDeletingId(target.id);
+    setActionError('');
+    setActionSuccess('');
+    try {
+      await onDeleteDedication(target.id);
+      setPendingDelete(null);
+      setActionSuccess(`Deleted ${target.childName} (${target.id}) successfully.`);
+      setTimeout(() => setActionSuccess(''), 4000);
+    } catch (err: any) {
+      setActionError(err?.message || 'Unable to delete record. Please ensure you are signed in with Google Cloud Sync as Super Admin or Office Admin.');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -194,6 +211,60 @@ export function DataLists({
           </label>
         </div>
       </div>
+
+      {/* Cloud Sync Banner if signed in via Email+Password only */}
+      {user && isAdmin && !firebaseUser && (
+        <div className="p-4 rounded-2xl bg-sky-50 border border-sky-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div>
+            <p className="font-bold text-sky-950">Connect Google Cloud Sync for Cloud Deletions</p>
+            <p className="text-sky-800">
+              Sign in with Google ({user.email}) once so record updates and deletions sync across the live cloud database.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={cloudConnecting}
+            onClick={async () => {
+              setActionError('');
+              setCloudConnecting(true);
+              try {
+                await connectCloudSync();
+              } catch (err: any) {
+                setActionError(err?.message || 'Unable to connect Google Cloud Sync.');
+              } finally {
+                setCloudConnecting(false);
+              }
+            }}
+            className="px-4 py-2 bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] font-bold rounded-xl text-xs whitespace-nowrap cursor-pointer shrink-0"
+          >
+            {cloudConnecting ? 'Connecting...' : 'Connect Google Cloud Sync'}
+          </button>
+        </div>
+      )}
+
+      {actionSuccess && (
+        <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 font-semibold">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{actionSuccess}</span>
+          </div>
+          <button type="button" onClick={() => setActionSuccess('')} className="text-emerald-700 hover:text-emerald-900 cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {actionError && !pendingDelete && (
+        <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+          <button type="button" onClick={() => setActionError('')} className="text-red-700 hover:text-red-900 cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Filter Row */}
       <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs grid grid-cols-1 sm:grid-cols-4 gap-3">
@@ -323,19 +394,27 @@ export function DataLists({
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         <button
+                          type="button"
                           onClick={() => onOpenCertificate(item)}
                           title="Certificate"
                           className="p-1.5 text-[#aa8222] hover:bg-[#fbf5e6] rounded-lg transition-colors cursor-pointer"
                         >
                           <Award className="w-4 h-4" />
                         </button>
-                        <button
-                          onClick={() => handleDelete(item.id, item.childName)}
-                          title="Delete"
-                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            disabled={deletingId === item.id}
+                            onClick={() => {
+                              setActionError('');
+                              setPendingDelete(item);
+                            }}
+                            title="Delete"
+                            className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -345,6 +424,76 @@ export function DataLists({
           </table>
         </div>
       </div>
+
+      {/* In-App Delete Confirmation Modal (avoids browser confirm() blocks in iframes & mobile) */}
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl border-2 border-red-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2.5 rounded-xl bg-red-100 text-red-700 shrink-0">
+                  <Trash2 className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-cinzel font-bold text-gray-900">
+                    Delete Dedication Record?
+                  </h3>
+                  <p className="text-xs text-gray-500 font-mono">{pendingDelete.id}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={Boolean(deletingId)}
+                onClick={() => setPendingDelete(null)}
+                className="text-gray-400 hover:text-gray-700 p-1 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-gray-50 border border-gray-200 text-xs space-y-1">
+              <p className="font-bold text-gray-900 text-sm">{pendingDelete.childName}</p>
+              <p className="text-gray-600">
+                {pendingDelete.selectedZone} • {pendingDelete.selectedFellowship} Fellowship
+              </p>
+              <p className="text-gray-500">
+                Parents: {pendingDelete.parentName || pendingDelete.fatherName || pendingDelete.motherName || 'N/A'}
+              </p>
+            </div>
+
+            <p className="text-xs text-red-700 leading-relaxed">
+              This will permanently remove this record from the active register and tracker across devices. This action cannot be undone.
+            </p>
+
+            {actionError && (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                <span>{actionError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={Boolean(deletingId)}
+                onClick={() => setPendingDelete(null)}
+                className="px-4 py-2 rounded-xl border border-gray-300 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={Boolean(deletingId)}
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {deletingId ? 'Deleting...' : 'Delete Permanently'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
