@@ -33,8 +33,10 @@ export function DataLists({
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Active records: all records that are not yet marked as 'completed'
-  const activeRecords = dedications.filter(d => d.status !== 'completed');
+  // Active records: all records that are not yet marked as 'completed', newest first
+  const activeRecords = [...dedications]
+    .filter(d => d.status !== 'completed')
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 
   const filtered = activeRecords.filter((d) => {
     const matchesSearch =

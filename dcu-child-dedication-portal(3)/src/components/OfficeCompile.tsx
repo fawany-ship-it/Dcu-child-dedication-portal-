@@ -7,7 +7,7 @@ import {
   Building2, CheckCircle2, Clock, Search, Filter, Shield, Award, 
   Printer, Check, AlertTriangle, FileCheck, Phone, ChevronRight,
   Edit3, Users, UserCheck, X, Save, RefreshCw, KeyRound, Mail, Calendar, MapPin,
-  UserPlus, UserX, Copy, CheckSquare, ShieldAlert, History, Download
+  UserPlus, UserX, Copy, CheckSquare, ShieldAlert, History, Download, Trash2
 } from 'lucide-react';
 
 interface OfficeCompileProps {
@@ -17,7 +17,9 @@ interface OfficeCompileProps {
 }
 
 export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertificate }: OfficeCompileProps) {
-  const { user, isSuperAdmin } = useAuth();
+  const { user, firebaseUser, connectCloudSync, isSuperAdmin } = useAuth();
+  const [cloudConnecting, setCloudConnecting] = useState(false);
+  const [cloudError, setCloudError] = useState('');
 
   const [selectedZone, setSelectedZone] = useState('All');
   const [selectedMonth, setSelectedMonth] = useState('All');
@@ -36,8 +38,16 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
   const [inviteRole, setInviteRole] = useState<'super_admin' | 'office_admin' | 'pastor' | 'fellowship_leader'>('fellowship_leader');
-  const [inviteZone, setInviteZone] = useState<'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E'>('Zone A');
-  const [createdInviteResult, setCreatedInviteResult] = useState<{ rawToken: string; inviteUrl: string } | null>(null);
+  const [inviteZone, setInviteZone] = useState<'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E' | ''>('');
+  const [inviteFellowship, setInviteFellowship] = useState<string>('');
+  const [createdInviteResult, setCreatedInviteResult] = useState<{
+    rawToken: string;
+    inviteUrl: string;
+    email: string;
+    role: string;
+    assignedZone: string;
+    assignedFellowship: string;
+  } | null>(null);
   const [inviteError, setInviteError] = useState('');
   const [copiedToken, setCopiedToken] = useState(false);
 
@@ -234,18 +244,66 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
     }
   };
 
+  const handleDeleteUser = async (u: UserProfile) => {
+    if (u.id === user?.id) {
+      alert('You cannot delete your own administrative account.');
+      return;
+    }
+    const confirmDelete = window.confirm(
+      `Are you sure you want to permanently delete staff account for ${u.name} (${u.email})?\n\nThis will remove their profile and immediately revoke all active sessions.`
+    );
+    if (!confirmDelete) return;
+
+    try {
+      await api.deleteUser(u.id);
+      fetchUsers();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to delete user');
+    }
+  };
+
+  const availableFellowshipsForInvite = ZONES.find((z) => z.name === inviteZone)?.fellowships || [];
+
+  const openInviteModal = () => {
+    setIsInviteModalOpen(true);
+    setCreatedInviteResult(null);
+    setInviteEmail('');
+    setInviteName('');
+    setInviteRole('fellowship_leader');
+    setInviteZone('');
+    setInviteFellowship('');
+    setInviteError('');
+    setCopiedToken(false);
+  };
+
   // Issue Staff Invitation
   const handleCreateInviteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setInviteError('');
+    if (!inviteZone) {
+      setInviteError('Please select the Assigned Fellowship Zone (Zone A – E) for this staff member.');
+      return;
+    }
+    if (!inviteFellowship) {
+      setInviteError(`Please select the specific Micro Church Fellowship under ${inviteZone}.`);
+      return;
+    }
     try {
       const res = await api.inviteStaff({
         email: inviteEmail.trim(),
         name: inviteName.trim(),
         role: inviteRole,
-        assignedZone: inviteRole === 'fellowship_leader' ? inviteZone : undefined
+        assignedZone: inviteZone,
+        assignedFellowship: inviteFellowship
       });
-      setCreatedInviteResult({ rawToken: res.rawToken, inviteUrl: res.inviteUrl });
+      setCreatedInviteResult({
+        rawToken: res.rawToken,
+        inviteUrl: res.inviteUrl,
+        email: inviteEmail.trim(),
+        role: inviteRole,
+        assignedZone: inviteZone,
+        assignedFellowship: inviteFellowship
+      });
       fetchInvitations();
     } catch (err: any) {
       setInviteError(err?.message || 'Failed to issue staff invitation.');
@@ -296,19 +354,21 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
             <p className="text-xs sm:text-sm text-gray-300 max-w-2xl">
               Deliverance Church International Utawala administrative management system. Confirms fellowship recommendations, schedules dedication dates, corrects form errors, issues certificates, and enforces RBAC authorization.
             </p>
+            {user && (user.assignedZone || user.assignedFellowship) && (
+              <div className="inline-flex items-center gap-2 mt-2.5 px-3 py-1.5 rounded-xl bg-black/35 border border-[#d4af37]/40 text-xs text-[#ffd700]">
+                <MapPin className="w-3.5 h-3.5 text-[#d4af37] shrink-0" />
+                <span>
+                  Profile Placement: <strong>{[user.assignedZone, user.assignedFellowship ? `${user.assignedFellowship} Fellowship` : ''].filter(Boolean).join(' • ')}</strong>
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Action Buttons: Staff Invite */}
           <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
             {isSuperAdmin && (
               <button
-                onClick={() => {
-                  setIsInviteModalOpen(true);
-                  setCreatedInviteResult(null);
-                  setInviteEmail('');
-                  setInviteName('');
-                  setInviteError('');
-                }}
+                onClick={openInviteModal}
                 className="bg-[#d4af37] hover:bg-[#e6c154] text-[#2a170e] font-bold px-4 py-2.5 rounded-xl text-xs sm:text-sm shadow-md flex items-center gap-2 cursor-pointer whitespace-nowrap"
               >
                 <KeyRound className="w-4 h-4 text-[#2a170e]" />
@@ -420,6 +480,64 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
             </button>
           )}
         </div>
+
+        {/* Cloud Sync Banner if signed in via Email+Password only */}
+        {user && !firebaseUser && (
+          <div className="p-3.5 rounded-2xl bg-sky-500/20 border border-sky-300/60 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md mt-2">
+            <div>
+              <p className="font-bold text-xs sm:text-sm text-[#ffd700]">
+                Activate Real-Time Cloud Sync
+              </p>
+              <p className="text-[11px] text-sky-100/90">
+                Sign in with your Google account ({user.email}) once to enable live cross-device Firestore syncing for all parent submissions, staff invitations, and archives.
+              </p>
+              {cloudError && <p className="text-[11px] text-red-200 font-semibold mt-1">{cloudError}</p>}
+            </div>
+            <button
+              type="button"
+              disabled={cloudConnecting}
+              onClick={async () => {
+                setCloudError('');
+                setCloudConnecting(true);
+                try {
+                  await connectCloudSync();
+                } catch (err: any) {
+                  setCloudError(err?.message || 'Unable to connect Google Cloud Sync.');
+                } finally {
+                  setCloudConnecting(false);
+                }
+              }}
+              className="px-4 py-2 bg-[#ffd700] hover:bg-[#e6c154] text-[#2a170e] font-bold text-xs rounded-xl transition-all shrink-0 cursor-pointer shadow-md whitespace-nowrap"
+            >
+              {cloudConnecting ? 'Connecting...' : 'Connect Google Cloud Sync'}
+            </button>
+          </div>
+        )}
+
+        {/* New Submissions Alert Banner */}
+        {awaitingLeaderRecords.length > 0 && activeSubTab !== 'awaiting_leader' && (
+          <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-400/50 text-amber-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md mt-2">
+            <div className="flex items-center gap-3">
+              <span className="p-2 rounded-xl bg-amber-400/20 text-[#ffd700] shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-300" />
+              </span>
+              <div>
+                <p className="font-bold text-xs sm:text-sm text-white">
+                  🔔 {awaitingLeaderRecords.length} New Parent Submission{awaitingLeaderRecords.length > 1 ? 's' : ''} Awaiting Leader Confirmation
+                </p>
+                <p className="text-[11px] text-amber-200/90">
+                  New forms submitted by parents are listed under Sub-Tab "Awaiting Leader" where you can review them or apply Office Override.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveSubTab('awaiting_leader')}
+              className="px-3.5 py-1.5 bg-[#d4af37] text-[#2a170e] hover:bg-[#e6c154] font-bold text-xs rounded-xl transition-all shrink-0 cursor-pointer shadow-md whitespace-nowrap"
+            >
+              View {awaitingLeaderRecords.length} Submissions →
+            </button>
+          </div>
+        )}
       </div>
 
       {/* SUB-TABS 1, 2, 3: DEDICATIONS LIST */}
@@ -486,7 +604,26 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                   {currentList.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-12 text-center text-gray-500">
-                        No dedication records found for this view.
+                        {activeSubTab === 'leader_approved' && awaitingLeaderRecords.length > 0 ? (
+                          <div className="space-y-3 max-w-md mx-auto p-5 bg-amber-50 rounded-2xl border border-amber-200 text-center">
+                            <Clock className="w-8 h-8 text-amber-600 mx-auto" />
+                            <p className="font-bold text-gray-900 text-sm">
+                              No Leader-Approved Records Yet
+                            </p>
+                            <p className="text-xs text-gray-600">
+                              There {awaitingLeaderRecords.length === 1 ? 'is' : 'are'} <strong>{awaitingLeaderRecords.length}</strong> new parent registration form{awaitingLeaderRecords.length > 1 ? 's' : ''} awaiting fellowship leader confirmation.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setActiveSubTab('awaiting_leader')}
+                              className="px-4 py-2 bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs inline-block"
+                            >
+                              Go to Awaiting Leader Confirmation ({awaitingLeaderRecords.length}) →
+                            </button>
+                          </div>
+                        ) : (
+                          'No dedication records found for this view.'
+                        )}
                       </td>
                     </tr>
                   ) : (
@@ -651,7 +788,7 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                     <th className="py-3.5 px-4">Staff Member</th>
                     <th className="py-3.5 px-4">Email</th>
                     <th className="py-3.5 px-4">Enforced Role</th>
-                    <th className="py-3.5 px-4">Assigned Zone</th>
+                    <th className="py-3.5 px-4">Assigned Zone &amp; Fellowship</th>
                     <th className="py-3.5 px-4">Status</th>
                     <th className="py-3.5 px-4">Last Login</th>
                     {isSuperAdmin && <th className="py-3.5 px-4 text-right">Super Admin Control</th>}
@@ -672,7 +809,16 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                           {u.role.replace('_', ' ')}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 font-bold text-[#2a170e]">{u.assignedZone || 'All Zones'}</td>
+                      <td className="py-3.5 px-4 font-bold text-[#2a170e]">
+                        <div>
+                          <span>{u.assignedZone || 'All Zones'}</span>
+                          {u.assignedFellowship && (
+                            <span className="block text-xs font-semibold text-amber-900 font-serif italic">
+                              {u.assignedFellowship} Fellowship
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-3.5 px-4">
                         {u.isSuspended ? (
                           <span className="text-[11px] font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-md">
@@ -685,14 +831,14 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                         )}
                       </td>
                       <td className="py-3.5 px-4">
-                        {u.lastLoginAt ? (
+                        {u.lastLoginAt || (user && user.email.toLowerCase() === u.email.toLowerCase()) ? (
                           <div className="space-y-0.5">
                             <span className="inline-flex items-center gap-1.5 text-emerald-800 font-bold text-[11px] bg-emerald-100/80 px-2 py-0.5 rounded-md border border-emerald-300">
                               <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
-                              Logged On
+                              {user && user.email.toLowerCase() === u.email.toLowerCase() ? 'Logged On Now (Active)' : 'Logged On'}
                             </span>
                             <p className="text-[11px] text-gray-600 font-medium">
-                              {new Date(u.lastLoginAt).toLocaleString('en-KE', {
+                              {new Date(u.lastLoginAt || Date.now()).toLocaleString('en-KE', {
                                 month: 'short',
                                 day: 'numeric',
                                 year: 'numeric',
@@ -715,16 +861,26 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                         <td className="py-3.5 px-4 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             {u.id !== user?.id && (
-                              <button
-                                onClick={() => handleToggleUserSuspension(u)}
-                                className={`text-[10px] px-2 py-1 rounded-md font-bold cursor-pointer border ${
-                                  u.isSuspended
-                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
-                                    : 'bg-red-50 text-red-800 border-red-300 hover:bg-red-100'
-                                }`}
-                              >
-                                {u.isSuspended ? 'Reactivate' : 'Suspend'}
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => handleToggleUserSuspension(u)}
+                                  className={`text-[10px] px-2 py-1 rounded-md font-bold cursor-pointer border ${
+                                    u.isSuspended
+                                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                                      : 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+                                  }`}
+                                >
+                                  {u.isSuspended ? 'Reactivate' : 'Suspend'}
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteUser(u)}
+                                  title="Permanently Delete Staff Member"
+                                  className="text-[10px] px-2 py-1 rounded-md font-bold cursor-pointer border bg-red-600 hover:bg-red-700 text-white border-red-700 flex items-center gap-1 shadow-xs transition-colors"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Delete</span>
+                                </button>
+                              </>
                             )}
                           </div>
                         </td>
@@ -753,13 +909,7 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
             </div>
 
             <button
-              onClick={() => {
-                setIsInviteModalOpen(true);
-                setCreatedInviteResult(null);
-                setInviteEmail('');
-                setInviteName('');
-                setInviteError('');
-              }}
+              onClick={openInviteModal}
               className="bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] border border-[#d4af37] px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
               <UserPlus className="w-4 h-4 text-[#ffd700]" />
@@ -774,7 +924,7 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                   <tr>
                     <th className="py-3.5 px-4">Invited Email & Name</th>
                     <th className="py-3.5 px-4">Target Role</th>
-                    <th className="py-3.5 px-4">Assigned Zone</th>
+                    <th className="py-3.5 px-4">Assigned Zone &amp; Fellowship</th>
                     <th className="py-3.5 px-4">Expires</th>
                     <th className="py-3.5 px-4">Status</th>
                     <th className="py-3.5 px-4 text-right">Actions</th>
@@ -800,7 +950,14 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                           {inv.role.replace('_', ' ')}
                         </td>
                         <td className="py-3.5 px-4 font-bold text-gray-700">
-                          {inv.assignedZone || 'All Zones'}
+                          <div>
+                            <span>{inv.assignedZone || 'All Zones'}</span>
+                            {inv.assignedFellowship && (
+                              <span className="block text-xs font-semibold text-amber-900 font-serif italic">
+                                {inv.assignedFellowship} Fellowship
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-3.5 px-4 text-xs text-gray-600">
                           {new Date(inv.expiresAt).toLocaleDateString()}
@@ -972,6 +1129,13 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                     <CheckCircle2 className="w-5 h-5 text-emerald-700" />
                     Invitation Issued Successfully!
                   </p>
+                  <div className="text-xs bg-white/80 p-2.5 rounded-xl border border-emerald-200 space-y-0.5">
+                    <p>Recipient: <strong>{createdInviteResult.email}</strong></p>
+                    <p>Role: <strong className="uppercase">{createdInviteResult.role.replace('_', ' ')}</strong></p>
+                    <p>
+                      Placement: <strong>{createdInviteResult.assignedZone} — {createdInviteResult.assignedFellowship} Fellowship</strong>
+                    </p>
+                  </div>
                   <p className="text-xs">
                     Share this secret single-use activation link or token with the authorized staff member:
                   </p>
@@ -1009,6 +1173,27 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                   <Copy className="w-4 h-4" />
                   {copiedToken ? 'Copied to Clipboard!' : 'Copy Invitation Link'}
                 </button>
+
+                {createdInviteResult.inviteUrl.includes('ais-dev-') && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-[11px] text-amber-950 space-y-2">
+                    <p className="leading-relaxed">
+                      <strong>Sharing to someone&apos;s phone?</strong> The <code className="font-mono">ais-dev-</code> link above is restricted to your personal AI Studio developer Google account. Share the public preview link instead (after publishing/sharing your latest update):
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sharedUrl = createdInviteResult.inviteUrl.replace('ais-dev-', 'ais-pre-');
+                        navigator.clipboard.writeText(sharedUrl);
+                        setCopiedToken(true);
+                        setTimeout(() => setCopiedToken(false), 2000);
+                      }}
+                      className="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      Copy Public Shared Phone Link (ais-pre)
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <form onSubmit={handleCreateInviteSubmit} className="space-y-4">
@@ -1056,20 +1241,48 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                   </select>
                 </div>
 
-                {inviteRole === 'fellowship_leader' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Assigned Fellowship Zone</label>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Assigned Fellowship Zone
+                    </label>
                     <select
+                      required
                       value={inviteZone}
-                      onChange={(e) => setInviteZone(e.target.value as any)}
+                      onChange={(e) => {
+                        const newZone = e.target.value as any;
+                        setInviteZone(newZone);
+                        setInviteFellowship('');
+                      }}
                       className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-xl bg-white font-bold text-[#2a170e]"
                     >
+                      <option value="">-- Select Zone (A–E) --</option>
                       {ZONES.map((z) => (
                         <option key={z.name} value={z.name}>{z.name}</option>
                       ))}
                     </select>
                   </div>
-                )}
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Assigned Home Fellowship
+                    </label>
+                    <select
+                      required
+                      disabled={!inviteZone}
+                      value={inviteFellowship}
+                      onChange={(e) => setInviteFellowship(e.target.value)}
+                      className="w-full p-2 text-xs sm:text-sm border border-gray-300 rounded-xl bg-white font-bold text-[#2a170e] disabled:bg-gray-100 disabled:text-gray-400"
+                    >
+                      <option value="">
+                        {inviteZone ? '-- Select Micro Church --' : '-- Select Zone First --'}
+                      </option>
+                      {availableFellowshipsForInvite.map((fName) => (
+                        <option key={fName} value={fName}>{fName}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
 
                 <button
                   type="submit"

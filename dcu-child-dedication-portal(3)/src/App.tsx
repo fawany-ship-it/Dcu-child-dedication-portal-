@@ -18,11 +18,18 @@ import { ChurchLogo } from './components/ChurchLogo';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { DedicationRecord, PastDedicationRecord } from './types';
 import { api } from './services/api';
+import { testFirestoreConnection } from './lib/firebase';
+import {
+  syncLocalSubmissionsToFirestore,
+  seedInitialDataIfAdmin,
+  subscribeDedicationsFromFirestore,
+} from './services/firestoreService';
 import { Phone, Mail, MapPin, Shield, Download } from 'lucide-react';
 
 function MainApp() {
   const { 
     user, 
+    firebaseUser,
     isSuperAdmin, 
     isOfficeAdmin, 
     isPastor, 
@@ -48,27 +55,69 @@ function MainApp() {
   const [trackerQuery, setTrackerQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load live dedications and isolated past dedications archive
+  // Verify Firestore connection and recover any pending local submissions on mount
   useEffect(() => {
+    testFirestoreConnection().catch(() => {});
+    syncLocalSubmissionsToFirestore().catch(() => {});
+  }, []);
+
+  // Load live dedications, isolated past dedications archive, and subscribe to Firestore real-time updates for staff
+  useEffect(() => {
+    let activeFlag = true;
+    let unsubscribeDedications: (() => void) | undefined;
+
     async function loadData() {
       try {
         const [active, past] = await Promise.all([
           api.getDedications(),
           api.getPastDedications()
         ]);
+        if (!activeFlag) return;
         setDedications(active);
         setPastDedications(past);
+
+        if (user && isStaff && firebaseUser) {
+          if (isSuperAdmin) {
+            const usersList = await api.getUsers().catch(() => []);
+            await seedInitialDataIfAdmin(user, usersList, active).catch(() => {});
+            const refreshedPast = await api.getPastDedications().catch(() => past);
+            if (activeFlag && refreshedPast.length > 0) {
+              setPastDedications(refreshedPast);
+            }
+          }
+
+          unsubscribeDedications = subscribeDedicationsFromFirestore(
+            user,
+            (cloudRecords) => {
+              if (!activeFlag) return;
+              setDedications((prev) => {
+                const merged = new Map<string, DedicationRecord>();
+                for (const p of prev) merged.set(p.id, p);
+                for (const c of cloudRecords) merged.set(c.id, c);
+                return Array.from(merged.values()).sort(
+                  (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+                );
+              });
+            },
+            (err) => console.warn('Firestore real-time subscription notice:', err)
+          );
+        }
       } catch (e) {
         console.error('Failed to load portal data', e);
       } finally {
-        setIsLoading(false);
+        if (activeFlag) setIsLoading(false);
       }
     }
+
     loadData();
-  }, [user]);
+    return () => {
+      activeFlag = false;
+      if (unsubscribeDedications) unsubscribeDedications();
+    };
+  }, [user, firebaseUser, isStaff, isSuperAdmin]);
 
   const handleCreateDedication = (newRecord: DedicationRecord) => {
-    setDedications((prev) => [newRecord, ...prev]);
+    setDedications((prev) => [newRecord, ...prev.filter(d => d.id !== newRecord.id)]);
   };
 
   const handleUpdateDedication = async (id: string, updates: Partial<DedicationRecord>) => {
@@ -146,21 +195,22 @@ function MainApp() {
   const isStaffAuthenticated = isStaff;
   const isOfficeAdminAuthorized = isOfficeAdmin || isPastor;
 
-  // Automatically switch tab when administrative staff sign in
+  // Automatically manage tab access based on user role
   useEffect(() => {
     if (user) {
       const normalizedRole = user.role === 'admin' ? 'super_admin' : user.role;
-      if (normalizedRole === 'super_admin' || normalizedRole === 'office_admin' || normalizedRole === 'pastor') {
+      if (normalizedRole === 'fellowship_leader') {
+        // Fellowship leaders cannot access Office Compile, Data Lists, or Past Data List
+        if (currentTab === 'office_compile' || currentTab === 'data_lists' || currentTab === 'past_data') {
+          setCurrentTab('leadership');
+        }
+      } else if (normalizedRole === 'super_admin' || normalizedRole === 'office_admin' || normalizedRole === 'pastor') {
         if (currentTab === 'about' || currentTab === 'home') {
           setCurrentTab('office_compile');
         }
-      } else if (normalizedRole === 'fellowship_leader') {
-        if (currentTab === 'about' || currentTab === 'home') {
-          setCurrentTab('leadership');
-        }
       }
     }
-  }, [user]);
+  }, [user, currentTab]);
 
   const navigateToTrackerWithId = (refName: string) => {
     setTrackerQuery(refName);
@@ -408,7 +458,7 @@ function MainApp() {
       />
 
       {/* Auth Modal */}
-      <AuthModal />
+      <AuthModal onNavigate={(tab) => setCurrentTab(tab)} />
     </div>
   );
 }

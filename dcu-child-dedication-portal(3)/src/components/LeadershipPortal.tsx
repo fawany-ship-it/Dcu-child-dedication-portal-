@@ -13,10 +13,19 @@ interface LeadershipPortalProps {
 }
 
 export function LeadershipPortal({ dedications, onUpdateDedication }: LeadershipPortalProps) {
-  const { user, isAdmin } = useAuth();
+  const { user, firebaseUser, connectCloudSync, isAdmin } = useAuth();
+  const [cloudConnecting, setCloudConnecting] = useState(false);
+  const [cloudError, setCloudError] = useState('');
 
   const isFellowshipLeader = user?.role === 'fellowship_leader';
-  const leaderAssignedZone = user?.assignedZone || 'Zone A';
+  const leaderAssignedZone = user?.assignedZone || '';
+  const leaderAssignedFellowship = user?.assignedFellowship || '';
+  const leaderPlacement = [
+    leaderAssignedZone || 'Unassigned Zone',
+    leaderAssignedFellowship ? `${leaderAssignedFellowship} Fellowship` : ''
+  ]
+    .filter(Boolean)
+    .join(' • ');
 
   // Zone A leader can only see Zone A, Zone B only Zone B, etc.
   const [selectedZone, setSelectedZone] = useState<string>('All');
@@ -25,14 +34,24 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
   const [notesInput, setNotesInput] = useState<{ [id: string]: string }>({});
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
-  // Effective Zone: if user is a fellowship zone leader, STRICTLY lock to their assigned zone!
+  // Effective Zone: if user is a fellowship leader, STRICTLY lock to their assigned zone & micro church fellowship!
   const effectiveZone = isFellowshipLeader ? leaderAssignedZone : selectedZone;
 
-  // Filter records strictly by zone for fellowship leaders
+  // Filter records strictly by zone (and micro church fellowship when assigned) for fellowship leaders
   const filtered = dedications.filter((d) => {
-    // 1. Zone strict privacy check
-    const matchesZone = effectiveZone === 'All' || d.selectedZone === effectiveZone;
-    if (!matchesZone) return false;
+    // 1. Zone & Fellowship strict privacy check
+    if (isFellowshipLeader) {
+      if (!leaderAssignedZone || d.selectedZone !== leaderAssignedZone) return false;
+      if (
+        leaderAssignedFellowship &&
+        (d.selectedFellowship || '').toLowerCase().trim() !== leaderAssignedFellowship.toLowerCase().trim()
+      ) {
+        return false;
+      }
+    } else {
+      const matchesZone = effectiveZone === 'All' || d.selectedZone === effectiveZone;
+      if (!matchesZone) return false;
+    }
 
     // 2. Search check
     const matchesSearch =
@@ -91,7 +110,16 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
   };
 
   const zoneRecords = isFellowshipLeader
-    ? dedications.filter(d => d.selectedZone === leaderAssignedZone)
+    ? dedications.filter((d) => {
+        if (!leaderAssignedZone || d.selectedZone !== leaderAssignedZone) return false;
+        if (
+          leaderAssignedFellowship &&
+          (d.selectedFellowship || '').toLowerCase().trim() !== leaderAssignedFellowship.toLowerCase().trim()
+        ) {
+          return false;
+        }
+        return true;
+      })
     : dedications;
 
   const pendingCount = zoneRecords.filter(d => !d.leadershipConfirmed).length;
@@ -107,19 +135,19 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
               <Shield className="w-3.5 h-3.5 text-[#d4af37]" /> Fellowship Leadership Portal
             </div>
             <h1 className="text-2xl sm:text-3xl font-cinzel font-bold text-white">
-              {isFellowshipLeader ? `${leaderAssignedZone} Leader Endorsements` : 'Fellowship Leadership Oversight'}
+              Fellowship Endorsement
             </h1>
             <p className="text-xs sm:text-sm text-[#f6efe2]/80 max-w-xl">
               {isFellowshipLeader
-                ? `Strict Zone Isolation: You can only view and confirm forms for candidates registered in ${leaderAssignedZone}. Parents' data in other zones remains confidential.`
-                : 'Church Administrators have full oversight across all zones (Zones A to E) and can confirm forms directly if a zone leader is delayed or unavailable.'}
+                ? `Strict micro church isolation: You can only view and confirm forms for candidates registered in your micro church fellowship (${leaderAssignedFellowship ? `${leaderAssignedFellowship} Fellowship, ${leaderAssignedZone}` : leaderPlacement}), not others. Parents' data in other fellowships remains out of your reach.`
+                : 'Strict micro church isolation: You can only view and confirm forms for candidates registered in your micro church fellowship, not others. Parents\' data in other fellowships remains out of your reach.'}
             </p>
           </div>
 
           <div className="flex gap-2 text-xs">
             <div className="bg-amber-500/20 border border-amber-400/40 p-3 rounded-2xl text-center">
               <p className="text-[#ffd700] font-bold text-lg">{pendingCount}</p>
-              <p className="text-[11px] text-amber-200">Pending in {isFellowshipLeader ? leaderAssignedZone : 'View'}</p>
+              <p className="text-[11px] text-amber-200">Pending in {isFellowshipLeader ? leaderPlacement : 'View'}</p>
             </div>
             <div className="bg-emerald-500/20 border border-emerald-400/40 p-3 rounded-2xl text-center">
               <p className="text-emerald-300 font-bold text-lg">{confirmedCount}</p>
@@ -128,13 +156,44 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
           </div>
         </div>
 
-        {/* Zone Isolation Notice for Fellowship Leaders */}
+        {/* Micro Church Isolation Notice for Fellowship Leaders */}
         {isFellowshipLeader && (
           <div className="p-3.5 bg-black/40 border border-[#d4af37]/40 rounded-2xl flex items-center gap-2.5 text-xs text-[#f6efe2]">
             <Lock className="w-4 h-4 text-[#ffd700] shrink-0" />
             <span>
-              <strong>Data Privacy Active:</strong> Logged in as <strong>{user?.name}</strong>. Access is strictly isolated to <strong>{leaderAssignedZone}</strong>. Once you confirm your zone's forms, your role is completed and the Church Office takes over compilation.
+              <strong>Data Privacy Active:</strong> Logged in as <strong>{user?.name}</strong>. Profile Placement: <strong>{leaderPlacement}</strong>. Access is strictly isolated to your micro church. Once you confirm your micro church fellowship's forms, your role is completed and the Church Office takes over compilation.
             </span>
+          </div>
+        )}
+
+        {/* Prompt email-only signed-in leaders to link Google for live cross-device Firestore sync */}
+        {user && !firebaseUser && (
+          <div className="p-3.5 bg-amber-500/20 border border-amber-300/60 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-white">
+            <div>
+              <p className="font-bold text-[#ffd700]">Activate Live Cross-Device Database Sync</p>
+              <p className="text-[11px] text-[#f6efe2]/90">
+                Link your Google account ({user.email}) once to load and endorse parent submissions sent from any phone or computer in real time.
+              </p>
+              {cloudError && <p className="text-[11px] text-red-200 font-semibold mt-1">{cloudError}</p>}
+            </div>
+            <button
+              type="button"
+              disabled={cloudConnecting}
+              onClick={async () => {
+                setCloudError('');
+                setCloudConnecting(true);
+                try {
+                  await connectCloudSync();
+                } catch (err: any) {
+                  setCloudError(err?.message || 'Unable to connect Google Cloud Sync.');
+                } finally {
+                  setCloudConnecting(false);
+                }
+              }}
+              className="bg-[#ffd700] hover:bg-[#e6c154] text-[#2a170e] font-bold px-4 py-2 rounded-xl text-xs whitespace-nowrap cursor-pointer shadow-sm shrink-0"
+            >
+              {cloudConnecting ? 'Connecting...' : 'Connect Google Cloud Sync'}
+            </button>
           </div>
         )}
       </div>
@@ -176,7 +235,7 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
           </div>
 
           <span className="text-xs text-gray-500 font-medium">
-            Active Role: <strong className="text-[#2a170e]">{user?.name}</strong> {isFellowshipLeader && `(${leaderAssignedZone})`}
+            Active Role: <strong className="text-[#2a170e]">{user?.name}</strong> {isFellowshipLeader && `(${leaderPlacement})`}
           </span>
         </div>
 
@@ -187,7 +246,7 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={`Search child, parent, phone in ${isFellowshipLeader ? leaderAssignedZone : 'all zones'}...`}
+              placeholder={`Search child, parent, phone in ${isFellowshipLeader ? leaderPlacement : 'all zones'}...`}
               className="w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#d4af37] outline-hidden"
             />
           </div>
@@ -195,12 +254,12 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
           {/* Zone Selector: LOCKED for Fellowship Leader, DROPDOWN for Admin */}
           <div>
             {isFellowshipLeader ? (
-              <div className="p-2.5 bg-[#fbf5e6] border-2 border-[#d4af37] rounded-xl text-xs font-bold text-[#2a170e] flex items-center justify-between">
+              <div className="p-2.5 bg-[#fbf5e6] border-2 border-[#d4af37] rounded-xl text-xs font-bold text-[#2a170e] flex items-center justify-between gap-2">
                 <span className="flex items-center gap-1.5">
-                  <Lock className="w-3.5 h-3.5 text-[#aa8222]" />
-                  <span>Zone: <strong>{leaderAssignedZone} ONLY</strong></span>
+                  <Lock className="w-3.5 h-3.5 text-[#aa8222] shrink-0" />
+                  <span>Specific micro church: <strong>{leaderPlacement}</strong> (Locked to its own fellowship)</span>
                 </span>
-                <span className="text-[10px] bg-[#2a170e] text-[#ffd700] px-2 py-0.5 rounded-full font-mono">
+                <span className="text-[10px] bg-[#2a170e] text-[#ffd700] px-2 py-0.5 rounded-full font-mono shrink-0">
                   Locked
                 </span>
               </div>
@@ -229,7 +288,7 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
           <div className="bg-white p-12 rounded-3xl border border-gray-200 text-center space-y-3">
             <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
             <h3 className="text-lg font-bold text-gray-800">
-              No Forms Awaiting Confirmation for {isFellowshipLeader ? leaderAssignedZone : selectedZone}
+              No Forms Awaiting Confirmation for {isFellowshipLeader ? leaderPlacement : selectedZone}
             </h3>
             <p className="text-xs text-gray-500 max-w-sm mx-auto">
               All member forms in this zone have been reviewed, or no pending registrations match this search.
@@ -376,7 +435,7 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
                         {confirmingId === item.id
                           ? 'Confirming...'
                           : isFellowshipLeader
-                          ? `Confirm ${item.childName} (${leaderAssignedZone})`
+                          ? `Confirm ${item.childName} (${leaderPlacement})`
                           : 'Confirm Form for Office'}
                       </button>
                     </div>
