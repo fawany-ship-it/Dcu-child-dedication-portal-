@@ -8,6 +8,30 @@ import {
 } from '../types';
 import { INITIAL_DEDICATIONS, INITIAL_USERS } from '../data/initialDedications';
 import { INITIAL_PAST_DEDICATIONS } from '../data/pastDedications';
+import { auth } from '../lib/firebase';
+import {
+  generateUniqueDedicationId,
+  isFirebaseStaffSignedIn,
+  submitDedicationToFirestore,
+  trackDedicationsInFirestore,
+  fetchDedicationsFromFirestore,
+  updateDedicationInFirestore,
+  deleteDedicationInFirestore,
+  adminUpsertDedicationsBatch,
+  fetchStaffRoleByEmail,
+  updateOwnLastLoginInFirestore,
+  syncStaffRoleToFirestore,
+  fetchStaffRolesFromFirestore,
+  deleteStaffRoleFromFirestore,
+  saveInvitationToFirestore,
+  fetchInvitationsFromFirestore,
+  revokeInvitationInFirestore,
+  fetchPastDedicationsFromFirestore,
+  createPastDedicationInFirestore,
+  updatePastDedicationInFirestore,
+  deletePastDedicationInFirestore,
+  syncLocalSubmissionsToFirestore,
+} from './firestoreService';
 
 const TOKEN_KEY = 'dcu_auth_session_token_v3';
 const STORAGE_PREFIX = 'dcu_v2_';
@@ -18,9 +42,46 @@ const STORAGE_INVITATIONS = `${STORAGE_PREFIX}invitations`;
 const STORAGE_AUDIT_LOGS = `${STORAGE_PREFIX}audit_logs`;
 const STORAGE_CURRENT_USER = `${STORAGE_PREFIX}current_user`;
 const STORAGE_STAFF_PASSPORTS = `${STORAGE_PREFIX}staff_passports_v1`;
+const STORAGE_DELETED_DEDICATIONS = 'dcu_deleted_dedication_ids_v1';
+
+export function getDeletedDedicationIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_DELETED_DEDICATIONS);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markDedicationDeleted(id: string) {
+  try {
+    const set = getDeletedDedicationIds();
+    set.add(id);
+    localStorage.setItem(STORAGE_DELETED_DEDICATIONS, JSON.stringify(Array.from(set).slice(-500)));
+  } catch {
+    // ignore storage limits
+  }
+}
+
+function clearDedicationDeleted(id: string) {
+  try {
+    const set = getDeletedDedicationIds();
+    if (set.delete(id)) {
+      localStorage.setItem(STORAGE_DELETED_DEDICATIONS, JSON.stringify(Array.from(set)));
+    }
+  } catch {
+    // ignore
+  }
+}
 
 let memoryToken: string | null = null;
 let isStaticHostingMode = false;
+
+function isTrueStaticSpaFallback(res: Response): boolean {
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+  return res.status === 200 && ct.includes('text/html');
+}
 
 function getStoredCredentialPassport(email: string): string | undefined {
   try {
@@ -249,7 +310,7 @@ function getCurrentLocalUser(): UserProfile | null {
   return null;
 }
 
-function setCurrentLocalUser(user: UserProfile | null) {
+export function setCurrentLocalUser(user: UserProfile | null) {
   try {
     if (user) {
       localStorage.setItem(STORAGE_CURRENT_USER, JSON.stringify(user));
@@ -257,6 +318,21 @@ function setCurrentLocalUser(user: UserProfile | null) {
       localStorage.removeItem(STORAGE_CURRENT_USER);
     }
   } catch {}
+}
+
+async function resolveActiveStaffUser(): Promise<UserProfile | null> {
+  const local = getCurrentLocalUser();
+  if (isFirebaseStaffSignedIn() && auth.currentUser?.email) {
+    const fbEmail = auth.currentUser.email.toLowerCase().trim();
+    if (!local || local.email.toLowerCase().trim() !== fbEmail || local.role === 'parent') {
+      const cloudRole = await fetchStaffRoleByEmail(fbEmail);
+      if (cloudRole && !cloudRole.isSuspended) {
+        setCurrentLocalUser(cloudRole);
+        return cloudRole;
+      }
+    }
+  }
+  return local;
 }
 
 // ============================================================
@@ -273,34 +349,35 @@ export const api = {
   async login(email: string, password: string): Promise<{ user: UserProfile; token: string; requiresMfa?: boolean }> {
     const cleanEmail = email.toLowerCase().trim();
 
-    if (!isStaticHostingMode) {
-      let receivedJson = false;
-      try {
-        const credentialPassport = getStoredCredentialPassport(cleanEmail);
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: cleanEmail, password, credentialPassport })
-        });
+    let receivedJson = false;
+    try {
+      const credentialPassport = getStoredCredentialPassport(cleanEmail);
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, password, credentialPassport })
+      });
 
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          receivedJson = true;
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Invalid credentials' }));
-            throw new Error(err.error || 'Invalid credentials');
-          }
-          const data = await res.json();
-          if (data.token) setSessionToken(data.token);
-          if (data.credentialPassport) saveStoredCredentialPassport(cleanEmail, data.credentialPassport);
-          setCurrentLocalUser(data.user);
-          return data;
-        } else {
-          // Received HTML (pure static SPA rewrite) - switch to local mode
-          isStaticHostingMode = true;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        receivedJson = true;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Invalid credentials' }));
+          throw new Error(err.error || 'Invalid credentials');
         }
-      } catch (err: any) {
-        if (receivedJson) throw err;
+        isStaticHostingMode = false;
+        const data = await res.json();
+        if (data.token) setSessionToken(data.token);
+        if (data.credentialPassport) saveStoredCredentialPassport(cleanEmail, data.credentialPassport);
+        setCurrentLocalUser(data.user);
+        return data;
+      } else if (isTrueStaticSpaFallback(res)) {
+        isStaticHostingMode = true;
+      } else {
+        throw new Error(`Authentication service error (HTTP ${res.status}). Please refresh and try again.`);
+      }
+    } catch (err: any) {
+      if (receivedJson || !isStaticHostingMode) {
         throw new Error(err?.message || 'Unable to reach the authentication server. Please try again.');
       }
     }
@@ -447,32 +524,98 @@ export const api = {
 
     const cleanInviteToken = payload.invitationToken?.trim() || undefined;
 
-    if (!isStaticHostingMode) {
-      let receivedJson = false;
-      try {
-        const credentialPassport = getStoredCredentialPassport(cleanEmail);
-        const res = await fetch('/api/auth/google', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...payload, email: cleanEmail, invitationToken: cleanInviteToken, credentialPassport })
-        });
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          receivedJson = true;
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Google authentication failed' }));
-            throw new Error(err.error || 'Google authentication failed');
-          }
-          const data = await res.json();
-          if (data.token) setSessionToken(data.token);
-          if (data.credentialPassport) saveStoredCredentialPassport(cleanEmail, data.credentialPassport);
-          setCurrentLocalUser(data.user);
-          return data;
-        } else {
-          isStaticHostingMode = true;
+    // Check authoritative Firestore staff_roles record if Firebase Auth session is active
+    let cloudStaffRole: UserProfile | null = null;
+    if (isFirebaseStaffSignedIn()) {
+      cloudStaffRole = await fetchStaffRoleByEmail(cleanEmail);
+      if (cloudStaffRole) {
+        if (cloudStaffRole.isSuspended) {
+          throw new Error('This account has been suspended by administration.');
         }
-      } catch (err: any) {
-        if (receivedJson) throw err;
+        const updatedLogin = await updateOwnLastLoginInFirestore(cleanEmail, payload.name, payload.avatar);
+        if (updatedLogin) {
+          cloudStaffRole.lastLoginAt = new Date().toISOString();
+        }
+      }
+    }
+
+    let receivedJson = false;
+    try {
+      const credentialPassport = getStoredCredentialPassport(cleanEmail);
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, email: cleanEmail, invitationToken: cleanInviteToken, credentialPassport })
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        receivedJson = true;
+        if (!res.ok) {
+          if (cloudStaffRole && !cleanInviteToken) {
+            // Firestore staff_roles is authoritative for Google-authenticated staff across stateless deployments
+            const verifiedUser: UserProfile = {
+              ...cloudStaffRole,
+              name: payload.name || cloudStaffRole.name,
+              avatar: payload.avatar || cloudStaffRole.avatar,
+              lastLoginAt: new Date().toISOString(),
+            };
+            const fallbackToken = `dcu-firebase-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            setSessionToken(fallbackToken);
+            setCurrentLocalUser(verifiedUser);
+            return { user: verifiedUser, token: fallbackToken };
+          }
+          const err = await res.json().catch(() => ({ error: 'Google authentication failed' }));
+          throw new Error(err.error || 'Google authentication failed');
+        }
+        isStaticHostingMode = false;
+        const data = await res.json();
+        // Prefer Firestore staff_roles assignment if present (e.g. invited staff signing in cross-device)
+        if (cloudStaffRole && !cleanInviteToken) {
+          data.user = {
+            ...data.user,
+            role: cloudStaffRole.role,
+            assignedZone: cloudStaffRole.assignedZone,
+            assignedFellowship: cloudStaffRole.assignedFellowship,
+            isApproved: cloudStaffRole.isApproved,
+            isSuspended: cloudStaffRole.isSuspended,
+            name: data.user.name || cloudStaffRole.name,
+            lastLoginAt: new Date().toISOString(),
+          };
+        }
+        if (data.token) setSessionToken(data.token);
+        if (data.credentialPassport) saveStoredCredentialPassport(cleanEmail, data.credentialPassport);
+        setCurrentLocalUser(data.user);
+        return data;
+      } else if (isTrueStaticSpaFallback(res)) {
+        isStaticHostingMode = true;
+      } else if (cloudStaffRole && !cleanInviteToken) {
+        const verifiedUser: UserProfile = {
+          ...cloudStaffRole,
+          name: payload.name || cloudStaffRole.name,
+          avatar: payload.avatar || cloudStaffRole.avatar,
+          lastLoginAt: new Date().toISOString(),
+        };
+        const fallbackToken = `dcu-firebase-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        setSessionToken(fallbackToken);
+        setCurrentLocalUser(verifiedUser);
+        return { user: verifiedUser, token: fallbackToken };
+      } else {
+        throw new Error(`Google authentication service error (HTTP ${res.status}). Please refresh and try again.`);
+      }
+    } catch (err: any) {
+      if (cloudStaffRole && !cleanInviteToken) {
+        const verifiedUser: UserProfile = {
+          ...cloudStaffRole,
+          name: payload.name || cloudStaffRole.name,
+          avatar: payload.avatar || cloudStaffRole.avatar,
+          lastLoginAt: new Date().toISOString(),
+        };
+        const fallbackToken = `dcu-firebase-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        setSessionToken(fallbackToken);
+        setCurrentLocalUser(verifiedUser);
+        return { user: verifiedUser, token: fallbackToken };
+      }
+      if (receivedJson || !isStaticHostingMode) {
         throw new Error(err?.message || 'Unable to reach the authentication server. Please try again.');
       }
     }
@@ -481,6 +624,11 @@ export const api = {
     initLocalDatabase();
     const users = getLocalUsers();
     let user = users.find(u => u.email.toLowerCase() === cleanEmail);
+    if (!user && cloudStaffRole) {
+      user = { ...cloudStaffRole };
+      users.push(user);
+      saveLocalUsers(users);
+    }
 
     if (cleanInviteToken) {
       const invites = getLocalInvitations();
@@ -595,31 +743,36 @@ export const api = {
     const cleanEmail = payload.email.toLowerCase().trim();
     const cleanToken = payload.token.trim();
 
-    if (!isStaticHostingMode) {
-      let receivedJson = false;
-      try {
-        const res = await fetch('/api/auth/accept-invitation', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...payload, token: cleanToken, email: cleanEmail })
-        });
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          receivedJson = true;
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Failed to accept invitation' }));
-            throw new Error(err.error || 'Failed to accept invitation');
-          }
-          const data = await res.json();
-          if (data.token) setSessionToken(data.token);
-          if (data.credentialPassport) saveStoredCredentialPassport(cleanEmail, data.credentialPassport);
-          setCurrentLocalUser(data.user);
-          return data;
-        } else {
-          isStaticHostingMode = true;
+    let receivedJson = false;
+    try {
+      const res = await fetch('/api/auth/accept-invitation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, token: cleanToken, email: cleanEmail })
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        receivedJson = true;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Failed to accept invitation' }));
+          throw new Error(err.error || 'Failed to accept invitation');
         }
-      } catch (err: any) {
-        if (receivedJson) throw err;
+        isStaticHostingMode = false;
+        const data = await res.json();
+        if (isFirebaseStaffSignedIn()) {
+          await updateOwnLastLoginInFirestore(cleanEmail, data.user?.name, data.user?.avatar).catch(() => {});
+        }
+        if (data.token) setSessionToken(data.token);
+        if (data.credentialPassport) saveStoredCredentialPassport(cleanEmail, data.credentialPassport);
+        setCurrentLocalUser(data.user);
+        return data;
+      } else if (isTrueStaticSpaFallback(res)) {
+        isStaticHostingMode = true;
+      } else {
+        throw new Error(`Invitation activation server error (HTTP ${res.status}). Please try again.`);
+      }
+    } catch (err: any) {
+      if (receivedJson || !isStaticHostingMode) {
         throw new Error(err?.message || 'Unable to reach the server to verify your invitation. Please try again.');
       }
     }
@@ -699,25 +852,27 @@ export const api = {
     const cleanToken = token.trim();
     const cleanEmail = email?.trim();
 
-    if (!isStaticHostingMode) {
-      let receivedJson = false;
-      try {
-        const query = new URLSearchParams({ token: cleanToken });
-        if (cleanEmail) query.set('email', cleanEmail);
-        const res = await fetch(`/api/auth/verify-invitation?${query.toString()}`);
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          receivedJson = true;
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Invalid invitation' }));
-            throw new Error(err.error || 'Invalid invitation');
-          }
-          return res.json();
-        } else {
-          isStaticHostingMode = true;
+    let receivedJson = false;
+    try {
+      const query = new URLSearchParams({ token: cleanToken });
+      if (cleanEmail) query.set('email', cleanEmail);
+      const res = await fetch(`/api/auth/verify-invitation?${query.toString()}`);
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        receivedJson = true;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Invalid invitation' }));
+          throw new Error(err.error || 'Invalid invitation');
         }
-      } catch (err: any) {
-        if (receivedJson) throw err;
+        isStaticHostingMode = false;
+        return res.json();
+      } else if (isTrueStaticSpaFallback(res)) {
+        isStaticHostingMode = true;
+      } else {
+        throw new Error(`Invitation verification failed (HTTP ${res.status}). Please refresh and try again.`);
+      }
+    } catch (err: any) {
+      if (receivedJson || !isStaticHostingMode) {
         throw new Error(err?.message || 'Unable to verify invitation right now.');
       }
     }
@@ -740,32 +895,80 @@ export const api = {
 
   async getMe(): Promise<UserProfile> {
     const currentLocal = getCurrentLocalUser();
+    const token = getSessionToken();
 
-    if (!isStaticHostingMode) {
-      let receivedJson = false;
-      try {
-        const res = await fetch('/api/auth/me', {
-          headers: getAuthHeaders()
-        });
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          receivedJson = true;
-          if (!res.ok) {
-            setSessionToken(null);
-            setCurrentLocalUser(null);
-            throw new Error('Not authenticated');
-          }
-          const data = await res.json();
-          setCurrentLocalUser(data);
-          return data;
-        } else {
-          isStaticHostingMode = true;
+    if (token && token.startsWith('dcu-firebase-') && isFirebaseStaffSignedIn() && auth.currentUser?.email) {
+      const fbEmail = auth.currentUser.email.toLowerCase().trim();
+      const cloudRole = await fetchStaffRoleByEmail(fbEmail);
+      if (cloudRole) {
+        if (cloudRole.isSuspended) {
+          setSessionToken(null);
+          setCurrentLocalUser(null);
+          throw new Error('This account has been suspended by administration.');
         }
-      } catch {
-        if (receivedJson) throw new Error('Not authenticated');
-        if (currentLocal) return currentLocal;
-        throw new Error('Not authenticated');
+        const lastTs = cloudRole.lastLoginAt ? new Date(cloudRole.lastLoginAt).getTime() : 0;
+        if (!lastTs || Number.isNaN(lastTs) || Date.now() - lastTs > 5 * 60 * 1000) {
+          const stamped = await updateOwnLastLoginInFirestore(
+            fbEmail,
+            auth.currentUser.displayName || cloudRole.name,
+            auth.currentUser.photoURL || cloudRole.avatar
+          );
+          if (stamped) {
+            cloudRole.lastLoginAt = new Date().toISOString();
+          }
+        }
+        setCurrentLocalUser(cloudRole);
+        return cloudRole;
       }
+      if (currentLocal && currentLocal.email.toLowerCase().trim() === fbEmail) {
+        return currentLocal;
+      }
+    }
+
+    let receivedJson = false;
+    try {
+      const res = await fetch('/api/auth/me', {
+        headers: getAuthHeaders()
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        receivedJson = true;
+        if (!res.ok) {
+          // If Firebase Auth still verifies this staff member in Firestore, keep their cloud session alive
+          if (isFirebaseStaffSignedIn() && auth.currentUser?.email) {
+            const fbEmail = auth.currentUser.email.toLowerCase().trim();
+            const cloudRole = await fetchStaffRoleByEmail(fbEmail);
+            if (cloudRole && !cloudRole.isSuspended) {
+              const lastTs = cloudRole.lastLoginAt ? new Date(cloudRole.lastLoginAt).getTime() : 0;
+              if (!lastTs || Number.isNaN(lastTs) || Date.now() - lastTs > 5 * 60 * 1000) {
+                const stamped = await updateOwnLastLoginInFirestore(
+                  fbEmail,
+                  auth.currentUser.displayName || cloudRole.name,
+                  auth.currentUser.photoURL || cloudRole.avatar
+                );
+                if (stamped) {
+                  cloudRole.lastLoginAt = new Date().toISOString();
+                }
+              }
+              setCurrentLocalUser(cloudRole);
+              return cloudRole;
+            }
+          }
+          setSessionToken(null);
+          setCurrentLocalUser(null);
+          throw new Error('Not authenticated');
+        }
+        isStaticHostingMode = false;
+        const data = await res.json();
+        setCurrentLocalUser(data);
+        return data;
+      } else if (isTrueStaticSpaFallback(res)) {
+        isStaticHostingMode = true;
+      }
+    } catch {
+      if (receivedJson) throw new Error('Not authenticated');
+      if (currentLocal) return currentLocal;
+      throw new Error('Not authenticated');
     }
 
     if (currentLocal) return currentLocal;
@@ -866,6 +1069,22 @@ export const api = {
   // ==========================================
 
   async getDedications(): Promise<DedicationRecord[]> {
+    const currentUser = await resolveActiveStaffUser();
+    const deletedIds = getDeletedDedicationIds();
+    const seedIds = new Set(INITIAL_DEDICATIONS.map((d) => d.id));
+
+    let cloudList: DedicationRecord[] = [];
+    let cloudFetchOk = false;
+    if (currentUser && isFirebaseStaffSignedIn() && currentUser.role !== 'parent') {
+      try {
+        cloudList = await fetchDedicationsFromFirestore(currentUser);
+        cloudFetchOk = true;
+      } catch (e) {
+        console.warn('Firestore fetch dedications notice:', e);
+      }
+    }
+
+    let serverList: DedicationRecord[] = [];
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -875,90 +1094,123 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
-            if (res.status === 401 || res.status === 403) return [];
-            throw new Error(`Failed to fetch dedications (${res.status})`);
+          if (res.ok) {
+            serverList = await res.json();
           }
-          const list = await res.json();
-          saveLocalDedications(list);
-          return list;
         } else {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        return [];
+        if (receivedJson && !cloudFetchOk) throw err;
+      }
+    } else if (currentUser) {
+      const all = getLocalDedications();
+      const role = currentUser.role;
+      if (role === 'super_admin' || role === 'office_admin' || role === 'pastor' || (role as string) === 'admin') {
+        serverList = all;
+      } else if (role === 'fellowship_leader' && currentUser.assignedZone) {
+        let filtered = all.filter(d => d.selectedZone === currentUser.assignedZone);
+        if (currentUser.assignedFellowship) {
+          const tf = currentUser.assignedFellowship.toLowerCase().trim();
+          filtered = filtered.filter(d => (d.selectedFellowship || '').toLowerCase().trim() === tf);
+        }
+        serverList = filtered;
       }
     }
 
-    // Local Fallback
-    const user = getCurrentLocalUser();
-    const all = getLocalDedications();
-    if (!user) return [];
-
-    const role = user.role;
-    if (role === 'super_admin' || role === 'office_admin' || role === 'pastor' || (role as string) === 'admin') {
-      return all;
-    }
-    if (role === 'fellowship_leader') {
-      const zone = user.assignedZone;
-      if (!zone) return [];
-      let filtered = all.filter(d => d.selectedZone === zone);
-      if (user.assignedFellowship) {
-        const targetFellowship = user.assignedFellowship.toLowerCase().trim();
-        filtered = filtered.filter(
-          d => (d.selectedFellowship || '').toLowerCase().trim() === targetFellowship
-        );
+    if (cloudFetchOk) {
+      const mergedMap = new Map<string, DedicationRecord>();
+      // Only include non-seed server items that weren't deleted; Firestore is authoritative for seeded & cloud docs
+      for (const item of serverList) {
+        if (!deletedIds.has(item.id) && !seedIds.has(item.id)) {
+          mergedMap.set(item.id, item);
+        }
       }
-      return filtered;
-    }
-    if (role === 'parent') {
-      return all.filter(d => 
-        (d.submittedBy && d.submittedBy.toLowerCase() === user.email.toLowerCase()) ||
-        (d.parentEmail && d.parentEmail.toLowerCase() === user.email.toLowerCase())
+      for (const item of cloudList) {
+        if (!deletedIds.has(item.id)) {
+          mergedMap.set(item.id, item);
+        }
+      }
+      const merged = Array.from(mergedMap.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
+      saveLocalDedications(merged);
+      return merged;
     }
-    return all;
+
+    const filteredServer = serverList.filter((item) => !deletedIds.has(item.id));
+    if (filteredServer.length > 0) {
+      saveLocalDedications(filteredServer);
+      return filteredServer;
+    }
+
+    return [];
   },
 
   async createDedication(record: Partial<DedicationRecord>): Promise<DedicationRecord> {
+    const uniqueId = record.id && /^[a-zA-Z0-9_\-]{3,128}$/.test(record.id)
+      ? record.id
+      : generateUniqueDedicationId();
+    clearDedicationDeleted(uniqueId);
+    const recordWithId: Partial<DedicationRecord> = {
+      ...record,
+      id: uniqueId,
+    };
+
+    // 1. Primary persistent cloud write to Firestore (works cross-device across Vercel & AI Studio)
+    let cloudCreated: DedicationRecord | null = null;
+    try {
+      cloudCreated = await submitDedicationToFirestore(recordWithId);
+    } catch (cloudErr) {
+      console.warn('Firestore direct submission fallback to server API:', cloudErr);
+    }
+
+    // 2. Mirror to Express/Vercel backend API when available
+    let serverCreated: DedicationRecord | null = null;
     if (!isStaticHostingMode) {
-      let receivedJson = false;
       try {
         const res = await fetch('/api/dedications', {
           method: 'POST',
           headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify(record)
+          body: JSON.stringify(recordWithId)
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
-          receivedJson = true;
-          if (!res.ok) {
+          if (res.ok) {
+            serverCreated = await res.json();
+          } else if (!cloudCreated) {
             const err = await res.json().catch(() => ({ error: 'Failed to create record' }));
             throw new Error(err.error || 'Submission failed');
           }
-          const created: DedicationRecord = await res.json();
-          const all = getLocalDedications();
-          saveLocalDedications([created, ...all.filter(d => d.id !== created.id)]);
-          return created;
         } else {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to submit registration right now. Please try again.');
+        if (!cloudCreated) {
+          throw new Error(err?.message || 'Unable to submit registration right now. Please try again.');
+        }
       }
     }
 
-    // Local Fallback
-    const all = getLocalDedications();
-    const currentYear = new Date().getFullYear();
-    const existingThisYear = all.filter(d => d.id.startsWith(`DED-${currentYear}`));
-    const seq = String(existingThisYear.length + 1).padStart(3, '0');
-    const newId = `DED-${currentYear}-${seq}`;
+    const finalRecord = cloudCreated || serverCreated;
+    if (finalRecord) {
+      const all = getLocalDedications();
+      saveLocalDedications([
+        finalRecord,
+        ...all.filter(
+          (d) =>
+            !(
+              d.id === finalRecord.id &&
+              d.childName.toLowerCase().trim() === finalRecord.childName.toLowerCase().trim()
+            )
+        ),
+      ]);
+      return finalRecord;
+    }
 
+    // 3. Pure offline fallback
     const newRecord: DedicationRecord = {
-      id: newId,
+      id: uniqueId,
       childName: record.childName || 'Unnamed Child',
       childDob: record.childDob || '',
       childGender: record.childGender || 'Male',
@@ -985,65 +1237,104 @@ export const api = {
       certificateIssued: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      ...record
+      ...record,
     };
-
+    const all = getLocalDedications();
     all.unshift(newRecord);
     saveLocalDedications(all);
-
     addLocalAuditLog({
       eventType: 'DEDICATION_CREATED',
       targetId: newRecord.id,
       outcome: 'SUCCESS',
       details: { childName: newRecord.childName, zone: newRecord.selectedZone }
     });
-
     return newRecord;
   },
 
-  async trackDedication(id: string, phone?: string): Promise<any> {
+  async trackDedications(id: string, phone?: string): Promise<any[]> {
+    // Ensure any device-cached submissions are synced cleanly before lookup
+    await syncLocalSubmissionsToFirestore().catch(() => 0);
+
+    const combined = new Map<string, any>();
+
+    // 1. Query persistent cloud Firestore status projection
+    try {
+      const cloudMatches = await trackDedicationsInFirestore(id, phone);
+      for (const m of cloudMatches) {
+        combined.set(`${m.id}::${String(m.childName || '').toLowerCase()}`, m);
+      }
+    } catch (e) {
+      console.warn('Firestore tracking lookup notice:', e);
+    }
+
+    // 2. Also query backend API (for AI Studio local JSON or server records)
     if (!isStaticHostingMode) {
-      let receivedJson = false;
       try {
         const query = new URLSearchParams({ id });
         if (phone) query.set('phone', phone);
         const res = await fetch(`/api/dedications/track?${query.toString()}`);
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
-          receivedJson = true;
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Tracking failed' }));
-            throw new Error(err.error || 'Record not found');
+          if (res.ok) {
+            const payload = await res.json();
+            const list = Array.isArray(payload.matches) ? payload.matches : [payload];
+            for (const m of list) {
+              const key = `${m.id}::${String(m.childName || '').toLowerCase()}`;
+              if (!combined.has(key)) combined.set(key, m);
+            }
           }
-          return res.json();
         } else {
           isStaticHostingMode = true;
         }
-      } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to track dedication right now.');
+      } catch {
+        // Firestore result suffices if server unreachable
       }
     }
 
-    const all = getLocalDedications();
-    const cleanQuery = id.trim().toLowerCase();
-    const cleanDigits = (phone || id).replace(/[^\d]/g, '');
+    // 3. Local device storage fallback if still empty
+    if (combined.size === 0) {
+      const all = getLocalDedications();
+      const cleanQuery = id.trim().toLowerCase();
+      const cleanDigits = (phone || id).replace(/[^\d]/g, '');
+      const localMatches = all.filter((d) =>
+        d.id.toLowerCase() === cleanQuery ||
+        (d.certificateNumber && d.certificateNumber.toLowerCase() === cleanQuery) ||
+        d.childName.toLowerCase().includes(cleanQuery) ||
+        (cleanDigits.length >= 7 && (
+          (d.fatherPhone || '').replace(/[^\d]/g, '').includes(cleanDigits) ||
+          (d.motherPhone || '').replace(/[^\d]/g, '').includes(cleanDigits) ||
+          (d.parentPhone || '').replace(/[^\d]/g, '').includes(cleanDigits)
+        ))
+      );
+      for (const m of localMatches) {
+        combined.set(`${m.id}::${m.childName.toLowerCase()}`, m);
+      }
+    }
 
-    const found = all.find(d => 
-      d.id.toLowerCase() === cleanQuery || 
-      (d.certificateNumber && d.certificateNumber.toLowerCase() === cleanQuery) ||
-      d.childName.toLowerCase().includes(cleanQuery) ||
-      (cleanDigits.length >= 7 && (
-        (d.fatherPhone || '').replace(/[^\d]/g, '').includes(cleanDigits) ||
-        (d.motherPhone || '').replace(/[^\d]/g, '').includes(cleanDigits) ||
-        (d.parentPhone || '').replace(/[^\d]/g, '').includes(cleanDigits)
-      ))
+    const results = Array.from(combined.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
-    if (!found) throw new Error('Dedication record not found. Please verify your Reference ID, Child Name, or Phone Number.');
-    return found;
+    if (results.length === 0) {
+      throw new Error('Dedication record not found. Please verify your Reference ID, Child Name, or Phone Number.');
+    }
+    return results;
+  },
+
+  async trackDedication(id: string, phone?: string): Promise<any> {
+    const matches = await this.trackDedications(id, phone);
+    return matches[0];
   },
 
   async updateDedication(id: string, updates: Partial<DedicationRecord>): Promise<DedicationRecord> {
+    const currentUser = await resolveActiveStaffUser();
+    const allLocal = getLocalDedications();
+    const existingLocal = allLocal.find((d) => d.id === id);
+
+    if (currentUser && isFirebaseStaffSignedIn()) {
+      await updateDedicationInFirestore(id, updates, currentUser, existingLocal);
+    }
+
+    let serverUpdated: DedicationRecord | null = null;
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -1055,71 +1346,91 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
+          if (res.ok) {
+            serverUpdated = await res.json();
+          } else if (!isFirebaseStaffSignedIn()) {
             const err = await res.json().catch(() => ({ error: 'Update failed' }));
             throw new Error(err.error || 'Failed to update record');
           }
-          return res.json();
         } else {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to update dedication right now.');
+        if (receivedJson && !isFirebaseStaffSignedIn()) throw err;
+        if (!isFirebaseStaffSignedIn()) {
+          throw new Error(err?.message || 'Unable to update dedication right now.');
+        }
       }
     }
 
-    // Local Fallback
-    const all = getLocalDedications();
-    const idx = all.findIndex(d => d.id === id);
-    if (idx === -1) throw new Error('Record not found.');
+    if (serverUpdated) {
+      const updatedAll = allLocal.some((d) => d.id === id)
+        ? allLocal.map((d) => (d.id === id ? serverUpdated! : d))
+        : [serverUpdated, ...allLocal];
+      saveLocalDedications(updatedAll);
+      return serverUpdated;
+    }
 
-    all[idx] = {
-      ...all[idx],
+    const idx = allLocal.findIndex((d) => d.id === id);
+    if (idx !== -1) {
+      allLocal[idx] = { ...allLocal[idx], ...updates, updatedAt: new Date().toISOString() };
+      saveLocalDedications(allLocal);
+      return allLocal[idx];
+    }
+
+    return {
+      ...(existingLocal || ({ id } as DedicationRecord)),
       ...updates,
-      updatedAt: new Date().toISOString()
-    };
-    saveLocalDedications(all);
-
-    addLocalAuditLog({
-      eventType: 'DEDICATION_UPDATED',
-      targetId: id,
-      outcome: 'SUCCESS',
-      details: updates
-    });
-
-    return all[idx];
+      updatedAt: new Date().toISOString(),
+    } as DedicationRecord;
   },
 
   async deleteDedication(id: string): Promise<boolean> {
+    let cloudDeleted = false;
+    if (isFirebaseStaffSignedIn()) {
+      await deleteDedicationInFirestore(id);
+      cloudDeleted = true;
+    }
+
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
-        const res = await fetch(`/api/dedications/${id}`, {
+        const res = await fetch(`/api/dedications/${encodeURIComponent(id)}`, {
           method: 'DELETE',
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
+          if (!res.ok && res.status !== 404 && !cloudDeleted) {
             const err = await res.json().catch(() => ({ error: 'Delete failed' }));
             throw new Error(err.error || 'Failed to delete record');
           }
-          return true;
         } else {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to delete dedication right now.');
+        if (receivedJson && !cloudDeleted) throw err;
       }
     }
 
-    // Local Fallback
+    markDedicationDeleted(id);
+
     let all = getLocalDedications();
     all = all.filter(d => d.id !== id);
     saveLocalDedications(all);
+
+    try {
+      const recent = JSON.parse(localStorage.getItem('dcu_parent_recent_submissions') || '[]');
+      if (Array.isArray(recent)) {
+        localStorage.setItem(
+          'dcu_parent_recent_submissions',
+          JSON.stringify(recent.filter((r: any) => r.id !== id))
+        );
+      }
+    } catch {
+      // ignore
+    }
 
     addLocalAuditLog({
       eventType: 'DEDICATION_DELETED',
@@ -1131,6 +1442,10 @@ export const api = {
   },
 
   async bulkImport(records: any[]): Promise<{ count: number; total: number }> {
+    if (isFirebaseStaffSignedIn()) {
+      await adminUpsertDedicationsBatch(records);
+    }
+
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -1152,7 +1467,9 @@ export const api = {
         }
       } catch (err: any) {
         if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to import records right now.');
+        if (!isFirebaseStaffSignedIn()) {
+          throw new Error(err?.message || 'Unable to import records right now.');
+        }
       }
     }
 
@@ -1168,6 +1485,17 @@ export const api = {
   // ==========================================
 
   async getPastDedications(): Promise<PastDedicationRecord[]> {
+    const current = await resolveActiveStaffUser();
+    let cloudList: PastDedicationRecord[] = [];
+    if (current && isFirebaseStaffSignedIn() && current.role !== 'fellowship_leader' && current.role !== 'parent') {
+      try {
+        cloudList = await fetchPastDedicationsFromFirestore();
+      } catch (e) {
+        console.warn('Firestore fetch past dedications notice:', e);
+      }
+    }
+
+    let serverList: PastDedicationRecord[] = [];
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -1177,58 +1505,86 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
-            if (res.status === 401 || res.status === 403) return [];
-            throw new Error('Failed to load past dedications');
+          if (res.ok) {
+            serverList = await res.json();
           }
-          const list = await res.json();
-          saveLocalPastDedications(list);
-          return list;
         } else {
           isStaticHostingMode = true;
         }
       } catch {
-        if (receivedJson) return [];
-        return [];
+        if (receivedJson && cloudList.length === 0) return [];
       }
+    } else if (current && current.role !== 'fellowship_leader' && current.role !== 'parent') {
+      serverList = getLocalPastDedications();
     }
-    const current = getCurrentLocalUser();
-    if (!current || current.role === 'fellowship_leader' || current.role === 'parent') {
-      return [];
+
+    if (cloudList.length > 0) {
+      const mergedMap = new Map<string, PastDedicationRecord>();
+      for (const p of serverList) mergedMap.set(p.id, p);
+      for (const p of cloudList) mergedMap.set(p.id, p);
+      const merged = Array.from(mergedMap.values()).sort((a, b) => (b.dedicationYear || 0) - (a.dedicationYear || 0));
+      saveLocalPastDedications(merged);
+      return merged;
     }
-    return getLocalPastDedications();
+
+    if (serverList.length > 0) {
+      saveLocalPastDedications(serverList);
+      return serverList;
+    }
+
+    return [];
   },
 
   async createPastDedication(record: Partial<PastDedicationRecord>): Promise<PastDedicationRecord> {
+    const generatedId = record.id && /^[a-zA-Z0-9_\-]{3,128}$/.test(record.id)
+      ? record.id
+      : `PAST-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const recordWithId: Partial<PastDedicationRecord> & { id: string } = {
+      ...record,
+      id: generatedId,
+    };
+
+    let cloudSaved = false;
+    if (isFirebaseStaffSignedIn()) {
+      await createPastDedicationInFirestore(recordWithId);
+      cloudSaved = true;
+    }
+
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
         const res = await fetch('/api/past-dedications', {
           method: 'POST',
           headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify(record)
+          body: JSON.stringify(recordWithId)
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
+          if (res.ok) {
+            const created = await res.json();
+            const all = getLocalPastDedications();
+            saveLocalPastDedications([created, ...all.filter(d => d.id !== created.id)]);
+            return created;
+          } else if (!cloudSaved) {
             const err = await res.json().catch(() => ({ error: 'Failed to create past record' }));
             throw new Error(err.error || 'Failed to create past record');
           }
-          return res.json();
         } else {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to save archive record right now.');
+        if (receivedJson && !cloudSaved) throw err;
+        if (!cloudSaved) {
+          throw new Error(err?.message || 'Unable to save archive record right now.');
+        }
       }
     }
 
-    // Local Fallback
+    // Local / Cloud Fallback
     const all = getLocalPastDedications();
     const newRecord: PastDedicationRecord = {
-      id: `PAST-${Date.now()}`,
+      id: generatedId,
       childName: record.childName || 'Historical Dedication',
       childDob: record.childDob || '2020-01-01',
       childGender: record.childGender || 'Male',
@@ -1239,8 +1595,8 @@ export const api = {
       motherName: record.motherName || '',
       motherPhone: record.motherPhone || '',
       motherEmail: record.motherEmail || '',
-      selectedZone: record.selectedZone || 'Zone A',
-      selectedFellowship: record.selectedFellowship || 'General',
+      selectedZone: record.selectedZone || '',
+      selectedFellowship: record.selectedFellowship || '',
       dedicationYear: record.dedicationYear || 2020,
       serviceDate: record.serviceDate || '2020-01-01',
       certificateNumber: record.certificateNumber || `DCU-HIST-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -1251,16 +1607,39 @@ export const api = {
       createdAt: new Date().toISOString()
     };
 
-    all.unshift(newRecord);
-    saveLocalPastDedications(all);
+    saveLocalPastDedications([newRecord, ...all.filter(d => d.id !== newRecord.id)]);
     return newRecord;
   },
 
   async bulkImportPastDedications(records: any[], options?: { replaceYear?: number; replaceAll?: boolean }): Promise<{ success: boolean; count: number }> {
+    const normalizedRecords = records.map((r, idx) => ({
+      ...r,
+      id: r.id && /^[a-zA-Z0-9_\-]{3,128}$/.test(r.id)
+        ? r.id
+        : `PAST-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`,
+    }));
+
+    let cloudSaved = false;
+    if (isFirebaseStaffSignedIn()) {
+      if (options?.replaceAll || options?.replaceYear) {
+        const existingCloud = await fetchPastDedicationsFromFirestore().catch(() => []);
+        const toDelete = options.replaceAll
+          ? existingCloud
+          : existingCloud.filter((p) => p.dedicationYear === options.replaceYear);
+        for (const item of toDelete) {
+          await deletePastDedicationInFirestore(item.id).catch(() => {});
+        }
+      }
+      for (const rec of normalizedRecords) {
+        await createPastDedicationInFirestore(rec);
+      }
+      cloudSaved = true;
+    }
+
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
-        const payload = options ? { records, replaceYear: options.replaceYear, replaceAll: options.replaceAll } : records;
+        const payload = options ? { records: normalizedRecords, replaceYear: options.replaceYear, replaceAll: options.replaceAll } : normalizedRecords;
         const res = await fetch('/api/past-dedications/bulk-import', {
           method: 'POST',
           headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -1269,34 +1648,43 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
+          if (res.ok) {
+            return res.json();
+          } else if (!cloudSaved) {
             const err = await res.json().catch(() => ({ error: 'Bulk import failed' }));
             throw new Error(err.error || 'Bulk import failed');
           }
-          return res.json();
         } else {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to bulk import past dedications right now.');
+        if (receivedJson && !cloudSaved) throw err;
+        if (!cloudSaved) {
+          throw new Error(err?.message || 'Unable to bulk import past dedications right now.');
+        }
       }
     }
 
-    // Local Fallback
+    // Local / Cloud Fallback
     let all = getLocalPastDedications();
     if (options?.replaceAll) {
-      all = records;
+      all = normalizedRecords;
     } else if (options?.replaceYear) {
-      all = [...records, ...all.filter(d => d.dedicationYear !== options.replaceYear)];
+      all = [...normalizedRecords, ...all.filter(d => d.dedicationYear !== options.replaceYear)];
     } else {
-      all.unshift(...records);
+      all.unshift(...normalizedRecords);
     }
     saveLocalPastDedications(all);
-    return { success: true, count: records.length };
+    return { success: true, count: normalizedRecords.length };
   },
 
   async updatePastDedication(id: string, updates: Partial<PastDedicationRecord>): Promise<PastDedicationRecord> {
+    let cloudSaved = false;
+    if (isFirebaseStaffSignedIn()) {
+      await updatePastDedicationInFirestore(id, updates);
+      cloudSaved = true;
+    }
+
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -1308,30 +1696,47 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
+          if (res.ok) {
+            const updated = await res.json();
+            const all = getLocalPastDedications();
+            saveLocalPastDedications(all.map(d => (d.id === id ? updated : d)));
+            return updated;
+          } else if (!cloudSaved) {
             const err = await res.json().catch(() => ({ error: 'Failed to update record' }));
             throw new Error(err.error || 'Failed to update record');
           }
-          return res.json();
         } else {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to update archive record right now.');
+        if (receivedJson && !cloudSaved) throw err;
+        if (!cloudSaved) {
+          throw new Error(err?.message || 'Unable to update archive record right now.');
+        }
       }
     }
 
-    // Local Fallback
+    // Local / Cloud Fallback
     const all = getLocalPastDedications();
     const idx = all.findIndex(d => d.id === id);
-    if (idx === -1) throw new Error('Past dedication record not found.');
-    all[idx] = { ...all[idx], ...updates };
-    saveLocalPastDedications(all);
-    return all[idx];
+    if (idx !== -1) {
+      all[idx] = { ...all[idx], ...updates };
+      saveLocalPastDedications(all);
+      return all[idx];
+    }
+    if (cloudSaved) {
+      return { id, ...updates } as PastDedicationRecord;
+    }
+    throw new Error('Past dedication record not found.');
   },
 
   async deletePastDedication(id: string): Promise<boolean> {
+    let cloudDeleted = false;
+    if (isFirebaseStaffSignedIn()) {
+      await deletePastDedicationInFirestore(id);
+      cloudDeleted = true;
+    }
+
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -1342,21 +1747,25 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
+          if (!res.ok && !cloudDeleted) {
             const err = await res.json().catch(() => ({ error: 'Delete failed' }));
             throw new Error(err.error || 'Delete failed');
           }
+          const all = getLocalPastDedications().filter(d => d.id !== id);
+          saveLocalPastDedications(all);
           return true;
         } else {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to delete archive record right now.');
+        if (receivedJson && !cloudDeleted) throw err;
+        if (!cloudDeleted) {
+          throw new Error(err?.message || 'Unable to delete archive record right now.');
+        }
       }
     }
 
-    // Local Fallback
+    // Local / Cloud Fallback
     let all = getLocalPastDedications();
     all = all.filter(d => d.id !== id);
     saveLocalPastDedications(all);
@@ -1368,6 +1777,17 @@ export const api = {
   // ==========================================
 
   async getUsers(): Promise<UserProfile[]> {
+    const current = await resolveActiveStaffUser();
+    let cloudUsers: UserProfile[] = [];
+    if (current && isFirebaseStaffSignedIn() && (current.role === 'super_admin' || current.role === 'office_admin' || (current.role as string) === 'admin')) {
+      try {
+        cloudUsers = await fetchStaffRolesFromFirestore();
+      } catch (e) {
+        console.warn('Firestore fetch staff_roles notice:', e);
+      }
+    }
+
+    let serverUsers: UserProfile[] = [];
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -1377,21 +1797,35 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) return [];
-          const users = await res.json();
-          saveLocalUsers(users);
-          return users;
+          if (res.ok) {
+            serverUsers = await res.json();
+          }
         } else {
           isStaticHostingMode = true;
         }
       } catch {
-        if (receivedJson) return [];
-        return [];
+        if (receivedJson && cloudUsers.length === 0) return [];
       }
+    } else {
+      serverUsers = getLocalUsers().map(({ password, ...u }) => u);
     }
 
-    const current = getCurrentLocalUser();
-    return getLocalUsers().map(({ password, ...u }) => {
+    const mergedMap = new Map<string, UserProfile>();
+    for (const u of serverUsers) mergedMap.set(u.email.toLowerCase(), u);
+    for (const cu of cloudUsers) {
+      const prev = mergedMap.get(cu.email.toLowerCase());
+      const cuTs = cu.lastLoginAt ? new Date(cu.lastLoginAt).getTime() : 0;
+      const prevTs = prev?.lastLoginAt ? new Date(prev.lastLoginAt).getTime() : 0;
+      const newestLogin =
+        cuTs >= prevTs ? (cu.lastLoginAt || prev?.lastLoginAt) : (prev?.lastLoginAt || cu.lastLoginAt);
+      mergedMap.set(cu.email.toLowerCase(), {
+        ...prev,
+        ...cu,
+        lastLoginAt: newestLogin,
+      });
+    }
+
+    const finalUsers = Array.from(mergedMap.values()).map((u) => {
       if (current && (current.id === u.id || current.email.toLowerCase() === u.email.toLowerCase())) {
         return {
           ...u,
@@ -1400,6 +1834,8 @@ export const api = {
       }
       return u;
     });
+    saveLocalUsers(finalUsers);
+    return finalUsers;
   },
 
   async inviteStaff(payload: {
@@ -1409,63 +1845,63 @@ export const api = {
     assignedZone?: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | 'Zone E';
     assignedFellowship?: string;
   }): Promise<{ invitation: StaffInvitation; rawToken: string; inviteUrl: string }> {
-    if (!isStaticHostingMode) {
-      let receivedJson = false;
-      try {
-        const res = await fetch('/api/users/invite', {
-          method: 'POST',
-          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify(payload)
-        });
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          receivedJson = true;
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Failed to issue invitation' }));
-            throw new Error(err.error || 'Failed to issue invitation');
-          }
-          const data = await res.json();
-          if (typeof window !== 'undefined' && data?.rawToken) {
-            data.inviteUrl = `${window.location.origin}/?invite=${encodeURIComponent(data.rawToken)}&email=${encodeURIComponent(payload.email.toLowerCase().trim())}`;
-          }
-          return data;
-        } else {
-          isStaticHostingMode = true;
-        }
-      } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to reach the server to issue invitation. Please try again.');
-      }
+    const res = await fetch('/api/users/invite', {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload)
+    });
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error(
+        `Cannot issue cross-device staff invitation because the server API (/api/users/invite) returned HTTP ${res.status} (${contentType || 'non-JSON'}). Please verify the backend API is deployed and try again.`
+      );
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to issue invitation' }));
+      throw new Error(err.error || 'Failed to issue invitation');
+    }
+    isStaticHostingMode = false;
+    const data = await res.json();
+    if (!data?.rawToken || !String(data.rawToken).startsWith('DCUINV1.')) {
+      throw new Error('Server did not return a signed cross-device invitation token (DCUINV1). Please refresh and try again.');
+    }
+    if (typeof window !== 'undefined') {
+      data.inviteUrl = `${window.location.origin}/?invite=${encodeURIComponent(data.rawToken)}&email=${encodeURIComponent(payload.email.toLowerCase().trim())}`;
     }
 
-    // Local Fallback (pure static hosting only)
-    const token = `INV-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    const inv: StaffInvitation = {
-      id: `inv-${Date.now()}`,
-      tokenHash: token,
-      email: payload.email.toLowerCase().trim(),
-      name: payload.name || payload.email.split('@')[0],
-      role: payload.role,
-      assignedZone: payload.assignedZone,
-      assignedFellowship: payload.assignedFellowship,
-      invitedBy: 'usr-admin-1',
-      invitedByEmail: 'fawany@gmail.com',
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-      status: 'pending'
-    };
+    // Immediately provision staff_roles & invitations in Firestore so the invited leader has cloud access on first sign-in
+    if (isFirebaseStaffSignedIn()) {
+      await Promise.all([
+        saveInvitationToFirestore(data.invitation).catch((e) => console.warn('Invitation Firestore sync notice:', e)),
+        syncStaffRoleToFirestore({
+          id: `usr-staff-${payload.email.toLowerCase().trim()}`,
+          email: payload.email.toLowerCase().trim(),
+          name: payload.name?.trim() || payload.email.split('@')[0],
+          role: payload.role,
+          assignedZone: payload.assignedZone,
+          assignedFellowship: payload.assignedFellowship,
+          isApproved: true,
+          isSuspended: false,
+          authProvider: 'google',
+        }).catch((e) => console.warn('Staff role pre-provision Firestore notice:', e)),
+      ]);
+    }
 
-    const invites = getLocalInvitations();
-    invites.unshift(inv);
-    saveLocalInvitations(invites);
-
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const inviteUrl = `${origin}/?invite=${token}&email=${encodeURIComponent(inv.email)}`;
-
-    return { invitation: inv, rawToken: token, inviteUrl };
+    return data;
   },
 
   async getInvitations(): Promise<StaffInvitation[]> {
+    const current = await resolveActiveStaffUser();
+    let cloudInvites: StaffInvitation[] = [];
+    if (current && isFirebaseStaffSignedIn() && (current.role === 'super_admin' || (current.role as string) === 'admin')) {
+      try {
+        cloudInvites = await fetchInvitationsFromFirestore();
+      } catch (e) {
+        console.warn('Firestore fetch invitations notice:', e);
+      }
+    }
+
+    let serverInvites: StaffInvitation[] = [];
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -1475,21 +1911,36 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) return [];
-          return res.json();
+          if (res.ok) {
+            serverInvites = await res.json();
+          }
         } else {
           isStaticHostingMode = true;
         }
       } catch {
-        if (receivedJson) return [];
-        return [];
+        if (receivedJson && cloudInvites.length === 0) return [];
       }
+    } else {
+      serverInvites = getLocalInvitations();
     }
 
-    return getLocalInvitations();
+    if (cloudInvites.length > 0) {
+      const mergedMap = new Map<string, StaffInvitation>();
+      for (const inv of serverInvites) mergedMap.set(inv.id, inv);
+      for (const inv of cloudInvites) mergedMap.set(inv.id, inv);
+      return Array.from(mergedMap.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+    }
+    return serverInvites;
   },
 
   async revokeInvitation(id: string): Promise<boolean> {
+    const current = getCurrentLocalUser();
+    if (current && isFirebaseStaffSignedIn()) {
+      await revokeInvitationInFirestore(id, current.id).catch(() => {});
+    }
+
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -1500,7 +1951,7 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
+          if (!res.ok && !isFirebaseStaffSignedIn()) {
             const err = await res.json().catch(() => ({ error: 'Failed to revoke' }));
             throw new Error(err.error || 'Failed to revoke');
           }
@@ -1509,12 +1960,13 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to revoke invitation right now.');
+        if (receivedJson && !isFirebaseStaffSignedIn()) throw err;
+        if (!isFirebaseStaffSignedIn()) {
+          throw new Error(err?.message || 'Unable to revoke invitation right now.');
+        }
       }
     }
 
-    // Local Fallback
     let invites = getLocalInvitations();
     invites = invites.filter(i => i.id !== id);
     saveLocalInvitations(invites);
@@ -1522,6 +1974,16 @@ export const api = {
   },
 
   async updateUserRole(id: string, role: string, assignedZone?: string, assignedFellowship?: string): Promise<UserProfile> {
+    const localMatch = getLocalUsers().find((u) => u.id === id);
+    if (localMatch && isFirebaseStaffSignedIn()) {
+      await syncStaffRoleToFirestore({
+        ...localMatch,
+        role: role as UserRole,
+        assignedZone: assignedZone as any,
+        assignedFellowship,
+      });
+    }
+
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -1533,21 +1995,23 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
+          if (res.ok) {
+            return res.json();
+          } else if (!isFirebaseStaffSignedIn()) {
             const err = await res.json().catch(() => ({ error: 'Failed to update user role' }));
             throw new Error(err.error || 'Failed to update user role');
           }
-          return res.json();
         } else {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to update user role right now.');
+        if (receivedJson && !isFirebaseStaffSignedIn()) throw err;
+        if (!isFirebaseStaffSignedIn()) {
+          throw new Error(err?.message || 'Unable to update user role right now.');
+        }
       }
     }
 
-    // Local Fallback
     const users = getLocalUsers();
     const user = users.find(u => u.id === id);
     if (!user) throw new Error('User not found.');
@@ -1561,6 +2025,14 @@ export const api = {
   },
 
   async updateUserStatus(id: string, isSuspended: boolean): Promise<UserProfile> {
+    const localMatch = getLocalUsers().find((u) => u.id === id);
+    if (localMatch && isFirebaseStaffSignedIn()) {
+      await syncStaffRoleToFirestore({
+        ...localMatch,
+        isSuspended,
+      });
+    }
+
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -1572,21 +2044,23 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
+          if (res.ok) {
+            return res.json();
+          } else if (!isFirebaseStaffSignedIn()) {
             const err = await res.json().catch(() => ({ error: 'Failed to update user status' }));
             throw new Error(err.error || 'Failed to update user status');
           }
-          return res.json();
         } else {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to update user status right now.');
+        if (receivedJson && !isFirebaseStaffSignedIn()) throw err;
+        if (!isFirebaseStaffSignedIn()) {
+          throw new Error(err?.message || 'Unable to update user status right now.');
+        }
       }
     }
 
-    // Local Fallback
     const users = getLocalUsers();
     const user = users.find(u => u.id === id);
     if (!user) throw new Error('User not found.');
@@ -1596,6 +2070,11 @@ export const api = {
   },
 
   async deleteUser(id: string): Promise<boolean> {
+    const localMatch = getLocalUsers().find((u) => u.id === id);
+    if (localMatch && isFirebaseStaffSignedIn()) {
+      await deleteStaffRoleFromFirestore(localMatch.email);
+    }
+
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
@@ -1606,7 +2085,7 @@ export const api = {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok) {
+          if (!res.ok && !isFirebaseStaffSignedIn()) {
             const err = await res.json().catch(() => ({ error: 'Failed to delete user' }));
             throw new Error(err.error || 'Failed to delete user');
           }
@@ -1615,12 +2094,13 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson) throw err;
-        throw new Error(err?.message || 'Unable to delete user right now.');
+        if (receivedJson && !isFirebaseStaffSignedIn()) throw err;
+        if (!isFirebaseStaffSignedIn()) {
+          throw new Error(err?.message || 'Unable to delete user right now.');
+        }
       }
     }
 
-    // Local Fallback
     let users = getLocalUsers();
     users = users.filter(u => u.id !== id);
     saveLocalUsers(users);

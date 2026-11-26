@@ -2,22 +2,30 @@ import React, { useState } from 'react';
 import { DedicationRecord } from '../types';
 import { ZONES } from '../data/zones';
 import { useAuth } from '../context/AuthContext';
+import { normalizeZone, normalizeFellowship } from '../services/firestoreService';
+import { formatFirestoreUiError } from '../lib/firebase';
 import { 
   Users, CheckCircle2, Clock, Search, Filter, Phone, Mail, 
-  MapPin, Shield, Check, MessageSquare, AlertCircle, Calendar, Lock, AlertTriangle
+  MapPin, Shield, Check, MessageSquare, AlertCircle, Calendar, Lock, AlertTriangle, X
 } from 'lucide-react';
 
 interface LeadershipPortalProps {
   dedications: DedicationRecord[];
   onUpdateDedication: (id: string, updates: Partial<DedicationRecord>) => Promise<void>;
+  syncPermissionError?: string;
 }
 
-export function LeadershipPortal({ dedications, onUpdateDedication }: LeadershipPortalProps) {
-  const { user, isAdmin } = useAuth();
+export function LeadershipPortal({ dedications, onUpdateDedication, syncPermissionError }: LeadershipPortalProps) {
+  const { user, firebaseUser, connectCloudSync, isAdmin } = useAuth();
+  const [cloudConnecting, setCloudConnecting] = useState(false);
+  const [cloudError, setCloudError] = useState('');
+  const [actionError, setActionError] = useState('');
 
   const isFellowshipLeader = user?.role === 'fellowship_leader';
-  const leaderAssignedZone = user?.assignedZone || '';
-  const leaderAssignedFellowship = user?.assignedFellowship || '';
+  const leaderAssignedZone = user?.assignedZone ? normalizeZone(user.assignedZone) : '';
+  const leaderAssignedFellowship = user?.assignedFellowship
+    ? normalizeFellowship(leaderAssignedZone || 'Zone A', user.assignedFellowship)
+    : '';
   const leaderPlacement = [
     leaderAssignedZone || 'Unassigned Zone',
     leaderAssignedFellowship ? `${leaderAssignedFellowship} Fellowship` : ''
@@ -37,17 +45,20 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
 
   // Filter records strictly by zone (and micro church fellowship when assigned) for fellowship leaders
   const filtered = dedications.filter((d) => {
+    const recZone = normalizeZone(d.selectedZone);
+    const recFellowship = normalizeFellowship(recZone, d.selectedFellowship);
+
     // 1. Zone & Fellowship strict privacy check
     if (isFellowshipLeader) {
-      if (!leaderAssignedZone || d.selectedZone !== leaderAssignedZone) return false;
+      if (!leaderAssignedZone || recZone !== leaderAssignedZone) return false;
       if (
         leaderAssignedFellowship &&
-        (d.selectedFellowship || '').toLowerCase().trim() !== leaderAssignedFellowship.toLowerCase().trim()
+        recFellowship.toLowerCase() !== leaderAssignedFellowship.toLowerCase()
       ) {
         return false;
       }
     } else {
-      const matchesZone = effectiveZone === 'All' || d.selectedZone === effectiveZone;
+      const matchesZone = effectiveZone === 'All' || recZone === effectiveZone;
       if (!matchesZone) return false;
     }
 
@@ -74,6 +85,7 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
 
   const handleConfirmForm = async (record: DedicationRecord, isOverride = false) => {
     setConfirmingId(record.id);
+    setActionError('');
     const leaderTitle = isOverride
       ? `${user?.name || 'Office Admin'} (Office Override - Leader Delayed/Unavailable)`
       : user?.name || `${record.selectedZone} Leader`;
@@ -90,29 +102,39 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
         fellowshipNotes: note,
         status: record.officeApproved ? 'office_approved' : 'fellowship_confirmed'
       });
-    } catch (e) {
+    } catch (e: any) {
       console.error('Error confirming form:', e);
-      alert('Failed to confirm form. Please try again.');
+      setActionError(
+        formatFirestoreUiError(
+          e,
+          'Failed to confirm form. Please ensure Google Cloud Sync is connected and try again.'
+        )
+      );
     } finally {
       setConfirmingId(null);
     }
   };
 
   const handleRevokeConfirm = async (record: DedicationRecord) => {
-    if (confirm(`Revoke fellowship confirmation for ${record.childName}?`)) {
+    setActionError('');
+    try {
       await onUpdateDedication(record.id, {
         leadershipConfirmed: false,
         status: 'submitted'
       });
+    } catch (e: any) {
+      setActionError(formatFirestoreUiError(e, 'Failed to revoke confirmation.'));
     }
   };
 
   const zoneRecords = isFellowshipLeader
     ? dedications.filter((d) => {
-        if (!leaderAssignedZone || d.selectedZone !== leaderAssignedZone) return false;
+        const recZone = normalizeZone(d.selectedZone);
+        const recFellowship = normalizeFellowship(recZone, d.selectedFellowship);
+        if (!leaderAssignedZone || recZone !== leaderAssignedZone) return false;
         if (
           leaderAssignedFellowship &&
-          (d.selectedFellowship || '').toLowerCase().trim() !== leaderAssignedFellowship.toLowerCase().trim()
+          recFellowship.toLowerCase() !== leaderAssignedFellowship.toLowerCase()
         ) {
           return false;
         }
@@ -125,6 +147,61 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
 
   return (
     <div className="space-y-6 pb-12">
+      {/* Top Action Banner when signed in via Email+Password without live Firebase Google Sync */}
+      {user && !firebaseUser && (
+        <div className="p-4 bg-gradient-to-r from-amber-50 to-amber-100 border-2 border-[#d4af37] rounded-2xl shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-[#2a170e]">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-sm text-[#2a170e]">
+                Action Required: Connect Google Cloud Sync to Load Forms
+              </p>
+              <p className="text-xs text-amber-950/90 mt-0.5 leading-relaxed">
+                You signed in with a password, which does not sync across phones or computers. Tap <strong>Connect Google Cloud Sync</strong> using <strong>{user.email}</strong> to load live parent submissions and update your status to Logged On for the Church Office.
+              </p>
+              {cloudError && <p className="text-xs text-red-700 font-bold mt-1.5">{cloudError}</p>}
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={cloudConnecting}
+            onClick={async () => {
+              setCloudError('');
+              setCloudConnecting(true);
+              try {
+                await connectCloudSync();
+              } catch (err: any) {
+                setCloudError(err?.message || 'Unable to connect Google Cloud Sync.');
+              } finally {
+                setCloudConnecting(false);
+              }
+            }}
+            className="bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] border border-[#d4af37] font-bold px-4 py-2.5 rounded-xl text-xs whitespace-nowrap cursor-pointer shadow-md shrink-0"
+          >
+            {cloudConnecting ? 'Connecting...' : 'Connect Google Cloud Sync'}
+          </button>
+        </div>
+      )}
+
+      {(syncPermissionError || actionError) && (
+        <div className="p-4 bg-red-50 border border-red-300 rounded-2xl text-xs text-red-800 flex items-start justify-between gap-2.5">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <span className="font-medium leading-relaxed">{syncPermissionError || actionError}</span>
+          </div>
+          {actionError && (
+            <button
+              type="button"
+              onClick={() => setActionError('')}
+              className="text-red-600 hover:text-red-900 p-0.5 cursor-pointer shrink-0"
+              aria-label="Dismiss error"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Leadership Header */}
       <div className="bg-gradient-to-r from-[#2a170e] to-[#3d2314] text-white p-6 sm:p-8 rounded-3xl shadow-xl border-2 border-[#d4af37]/40 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -163,6 +240,7 @@ export function LeadershipPortal({ dedications, onUpdateDedication }: Leadership
             </span>
           </div>
         )}
+
       </div>
 
       {/* Filter and Zone Selector Bar */}
