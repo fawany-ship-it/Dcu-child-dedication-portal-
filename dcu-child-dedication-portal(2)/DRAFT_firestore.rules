@@ -1,0 +1,501 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Pillar 1 / Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==========================================
+    // GLOBAL HARDENED PRIMITIVES
+    // ==========================================
+    function isValidId(id) {
+      return id is string && id.size() >= 3 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidEmailKey(email) {
+      return email is string && email.size() >= 3 && email.size() <= 160 && email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null &&
+        request.auth.token.email is string &&
+        request.auth.token.email_verified == true;
+    }
+
+    function callerEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function isBootstrappedSuperAdmin() {
+      return isSignedIn() && callerEmail() == 'fawany@gmail.com';
+    }
+
+    function hasStaffDoc() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/staff_roles/$(callerEmail()));
+    }
+
+    function staffDoc() {
+      return get(/databases/$(database)/documents/staff_roles/$(callerEmail())).data;
+    }
+
+    function isActiveStaff() {
+      return isBootstrappedSuperAdmin() || (
+        hasStaffDoc() &&
+        staffDoc().isApproved == true &&
+        staffDoc().isSuspended != true
+      );
+    }
+
+    function isSuperAdmin() {
+      return isBootstrappedSuperAdmin() || (
+        isActiveStaff() &&
+        staffDoc().role == 'super_admin'
+      );
+    }
+
+    function isOfficeOrSuperAdmin() {
+      return isSuperAdmin() || (
+        isActiveStaff() &&
+        staffDoc().role == 'office_admin'
+      );
+    }
+
+    function isPastor() {
+      return isActiveStaff() && staffDoc().role == 'pastor';
+    }
+
+    function isPastorForZone(zone) {
+      return isPastor() && (
+        !('assignedZone' in staffDoc()) ||
+        staffDoc().assignedZone == null ||
+        staffDoc().assignedZone == '' ||
+        (zone is string && staffDoc().assignedZone is string && staffDoc().assignedZone.lower() == zone.lower())
+      );
+    }
+
+    function isLeaderForRecord(zone, fellowship) {
+      return isActiveStaff() &&
+        staffDoc().role == 'fellowship_leader' &&
+        ('assignedZone' in staffDoc()) &&
+        staffDoc().assignedZone == zone &&
+        (
+          !('assignedFellowship' in staffDoc()) ||
+          staffDoc().assignedFellowship == '' ||
+          staffDoc().assignedFellowship == fellowship
+        );
+    }
+
+    function isLeaderForSingleRecord(zone, fellowship) {
+      return isActiveStaff() &&
+        staffDoc().role == 'fellowship_leader' &&
+        ('assignedZone' in staffDoc()) &&
+        staffDoc().assignedZone is string &&
+        zone is string &&
+        staffDoc().assignedZone.trim().lower() == zone.trim().lower() &&
+        (
+          !('assignedFellowship' in staffDoc()) ||
+          staffDoc().assignedFellowship == null ||
+          staffDoc().assignedFellowship == '' ||
+          (
+            staffDoc().assignedFellowship is string &&
+            fellowship is string && (
+              staffDoc().assignedFellowship.trim().lower() == fellowship.trim().lower() ||
+              (staffDoc().assignedFellowship.trim().lower() + ' fellowship') == fellowship.trim().lower() ||
+              staffDoc().assignedFellowship.trim().lower() == (fellowship.trim().lower() + ' fellowship')
+            )
+          )
+        );
+    }
+
+    // ==========================================
+    // VALIDATION BLUEPRINTS
+    // ==========================================
+    function isValidDedicationShape(data) {
+      return data.keys().hasAll([
+          'id', 'childName', 'childDob', 'childGender', 'childCountyOfBirth',
+          'isInFellowship', 'selectedZone', 'selectedFellowship', 'dataConsent',
+          'status', 'leadershipConfirmed', 'officeApproved', 'certificateIssued',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'childName', 'childDob', 'childGender', 'childCountyOfBirth', 'childPlaceOfBirth',
+          'fatherName', 'fatherPhone', 'fatherEmail',
+          'motherName', 'motherPhone', 'motherEmail',
+          'parentName', 'parentPhone', 'parentEmail', 'parentRelationship',
+          'isInFellowship', 'selectedZone', 'selectedFellowship', 'residentialLocation',
+          'dataConsent', 'status', 'serviceDate',
+          'leadershipConfirmed', 'fellowshipLeaderName', 'fellowshipConfirmedAt', 'fellowshipNotes',
+          'officeApproved', 'officeAdminName', 'officeConfirmedAt', 'officeNotes',
+          'certificateIssued', 'certificateNumber', 'submittedBy', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.childName is string && data.childName.size() >= 1 && data.childName.size() <= 160 &&
+        data.childDob is string && data.childDob.size() >= 4 && data.childDob.size() <= 32 &&
+        data.childGender in ['Male', 'Female'] &&
+        data.childCountyOfBirth is string && data.childCountyOfBirth.size() >= 1 && data.childCountyOfBirth.size() <= 80 &&
+        (!('childPlaceOfBirth' in data) || data.childPlaceOfBirth == null || (data.childPlaceOfBirth is string && data.childPlaceOfBirth.size() <= 120)) &&
+        (!('fatherName' in data) || data.fatherName == null || (data.fatherName is string && data.fatherName.size() <= 160)) &&
+        (!('fatherPhone' in data) || data.fatherPhone == null || (data.fatherPhone is string && data.fatherPhone.size() <= 40)) &&
+        (!('fatherEmail' in data) || data.fatherEmail == null || (data.fatherEmail is string && data.fatherEmail.size() <= 160)) &&
+        (!('motherName' in data) || data.motherName == null || (data.motherName is string && data.motherName.size() <= 160)) &&
+        (!('motherPhone' in data) || data.motherPhone == null || (data.motherPhone is string && data.motherPhone.size() <= 40)) &&
+        (!('motherEmail' in data) || data.motherEmail == null || (data.motherEmail is string && data.motherEmail.size() <= 160)) &&
+        (!('parentName' in data) || data.parentName == null || (data.parentName is string && data.parentName.size() <= 200)) &&
+        (!('parentPhone' in data) || data.parentPhone == null || (data.parentPhone is string && data.parentPhone.size() <= 40)) &&
+        (!('parentEmail' in data) || data.parentEmail == null || (data.parentEmail is string && data.parentEmail.size() <= 160)) &&
+        (!('parentRelationship' in data) || data.parentRelationship == null || (data.parentRelationship is string && data.parentRelationship.size() <= 60)) &&
+        data.isInFellowship is bool &&
+        data.selectedZone in ['Zone A', 'Zone B', 'Zone C', 'Zone D', 'Zone E', 'Unallocated'] &&
+        data.selectedFellowship is string && data.selectedFellowship.size() >= 1 && data.selectedFellowship.size() <= 100 &&
+        (!('residentialLocation' in data) || data.residentialLocation == null || (data.residentialLocation is string && data.residentialLocation.size() <= 240)) &&
+        data.dataConsent is bool &&
+        data.status in ['submitted', 'fellowship_confirmed', 'office_approved', 'compiled', 'completed'] &&
+        (!('serviceDate' in data) || data.serviceDate == null || (data.serviceDate is string && data.serviceDate.size() <= 80)) &&
+        data.leadershipConfirmed is bool &&
+        (!('fellowshipLeaderName' in data) || data.fellowshipLeaderName == null || (data.fellowshipLeaderName is string && data.fellowshipLeaderName.size() <= 160)) &&
+        (!('fellowshipConfirmedAt' in data) || data.fellowshipConfirmedAt == null || (data.fellowshipConfirmedAt is string && data.fellowshipConfirmedAt.size() <= 64)) &&
+        (!('fellowshipNotes' in data) || data.fellowshipNotes == null || (data.fellowshipNotes is string && data.fellowshipNotes.size() <= 500)) &&
+        data.officeApproved is bool &&
+        (!('officeAdminName' in data) || data.officeAdminName == null || (data.officeAdminName is string && data.officeAdminName.size() <= 160)) &&
+        (!('officeConfirmedAt' in data) || data.officeConfirmedAt == null || (data.officeConfirmedAt is string && data.officeConfirmedAt.size() <= 64)) &&
+        (!('officeNotes' in data) || data.officeNotes == null || (data.officeNotes is string && data.officeNotes.size() <= 500)) &&
+        data.certificateIssued is bool &&
+        (!('certificateNumber' in data) || data.certificateNumber == null || (data.certificateNumber is string && data.certificateNumber.size() <= 80)) &&
+        (!('submittedBy' in data) || data.submittedBy == null || (data.submittedBy is string && data.submittedBy.size() <= 160)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDedicationStatusShape(data) {
+      return data.keys().hasAll([
+          'id', 'childName', 'childNameLower', 'selectedZone', 'selectedFellowship',
+          'status', 'leadershipConfirmed', 'officeApproved', 'certificateIssued',
+          'phoneHashes', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'childName', 'childNameLower', 'selectedZone', 'selectedFellowship',
+          'status', 'serviceDate', 'leadershipConfirmed', 'officeApproved',
+          'certificateIssued', 'certificateNumber', 'phoneHashes', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.childName is string && data.childName.size() >= 1 && data.childName.size() <= 160 &&
+        data.childNameLower is string && data.childNameLower.size() >= 1 && data.childNameLower.size() <= 160 &&
+        data.selectedZone in ['Zone A', 'Zone B', 'Zone C', 'Zone D', 'Zone E', 'Unallocated'] &&
+        data.selectedFellowship is string && data.selectedFellowship.size() >= 1 && data.selectedFellowship.size() <= 100 &&
+        data.status in ['submitted', 'fellowship_confirmed', 'office_approved', 'compiled', 'completed'] &&
+        (!('serviceDate' in data) || data.serviceDate == null || (data.serviceDate is string && data.serviceDate.size() <= 80)) &&
+        data.leadershipConfirmed is bool &&
+        data.officeApproved is bool &&
+        data.certificateIssued is bool &&
+        (!('certificateNumber' in data) || data.certificateNumber == null || (data.certificateNumber is string && data.certificateNumber.size() <= 80)) &&
+        data.phoneHashes is list && data.phoneHashes.size() <= 4 &&
+        (data.phoneHashes.size() == 0 || data.phoneHashes[0] is string) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLeaderEndorsementFields(data) {
+      return data.leadershipConfirmed is bool &&
+        data.status in ['submitted', 'fellowship_confirmed'] &&
+        data.updatedAt == request.time &&
+        (!('fellowshipLeaderName' in data) || data.fellowshipLeaderName == null || (data.fellowshipLeaderName is string && data.fellowshipLeaderName.size() <= 160)) &&
+        (!('fellowshipConfirmedAt' in data) || data.fellowshipConfirmedAt == null || (data.fellowshipConfirmedAt is string && data.fellowshipConfirmedAt.size() <= 64)) &&
+        (!('fellowshipNotes' in data) || data.fellowshipNotes == null || (data.fellowshipNotes is string && data.fellowshipNotes.size() <= 500));
+    }
+
+    function isValidStatusLeaderEndorsementFields(data) {
+      return data.leadershipConfirmed is bool &&
+        data.status in ['submitted', 'fellowship_confirmed'] &&
+        data.updatedAt == request.time;
+    }
+
+    function isValidStaffRoleShape(data) {
+      return data.keys().hasAll(['id', 'email', 'name', 'role', 'isApproved', 'isSuspended', 'authProvider', 'createdAt']) &&
+        data.keys().hasOnly([
+          'id', 'email', 'name', 'role', 'assignedZone', 'assignedFellowship',
+          'isApproved', 'isSuspended', 'authProvider', 'avatar', 'phone', 'createdAt', 'lastLoginAt'
+        ]) &&
+        data.id is string && data.id.size() >= 2 && data.id.size() <= 128 &&
+        isValidEmailKey(data.email) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+        data.role in ['super_admin', 'office_admin', 'pastor', 'fellowship_leader'] &&
+        (!('assignedZone' in data) || data.assignedZone == null || (data.assignedZone is string && data.assignedZone.size() <= 40)) &&
+        (!('assignedFellowship' in data) || data.assignedFellowship == null || (data.assignedFellowship is string && data.assignedFellowship.size() <= 100)) &&
+        data.isApproved is bool &&
+        data.isSuspended is bool &&
+        data.authProvider in ['google', 'email'] &&
+        (!('avatar' in data) || data.avatar == null || (data.avatar is string && data.avatar.size() <= 400)) &&
+        (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 40)) &&
+        data.createdAt is timestamp &&
+        (!('lastLoginAt' in data) || data.lastLoginAt == null || (data.lastLoginAt is string && data.lastLoginAt.size() <= 64));
+    }
+
+    function isValidPastDedicationShape(data) {
+      return data.keys().hasAll(['id', 'childName', 'dedicationYear', 'serviceDate', 'certificateNumber', 'certificateIssued', 'createdAt']) &&
+        data.keys().hasOnly([
+          'id', 'childName', 'childDob', 'childGender', 'childCountyOfBirth', 'childPlaceOfBirth',
+          'fatherName', 'fatherPhone', 'fatherEmail',
+          'motherName', 'motherPhone', 'motherEmail',
+          'parentName', 'parentPhone', 'parentEmail',
+          'selectedZone', 'selectedFellowship', 'dedicationYear', 'serviceDate', 'originalDateRaw',
+          'certificateNumber', 'certificateIssued', 'officiatingMinister', 'notes', 'archivalSource',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.childName is string && data.childName.size() >= 1 && data.childName.size() <= 160 &&
+        (!('childDob' in data) || (data.childDob is string && data.childDob.size() <= 32)) &&
+        (!('childGender' in data) || data.childGender in ['Male', 'Female']) &&
+        (!('childCountyOfBirth' in data) || (data.childCountyOfBirth is string && data.childCountyOfBirth.size() <= 80)) &&
+        (!('childPlaceOfBirth' in data) || (data.childPlaceOfBirth is string && data.childPlaceOfBirth.size() <= 120)) &&
+        (!('fatherName' in data) || (data.fatherName is string && data.fatherName.size() <= 160)) &&
+        (!('fatherPhone' in data) || (data.fatherPhone is string && data.fatherPhone.size() <= 40)) &&
+        (!('fatherEmail' in data) || (data.fatherEmail is string && data.fatherEmail.size() <= 160)) &&
+        (!('motherName' in data) || (data.motherName is string && data.motherName.size() <= 160)) &&
+        (!('motherPhone' in data) || (data.motherPhone is string && data.motherPhone.size() <= 40)) &&
+        (!('motherEmail' in data) || (data.motherEmail is string && data.motherEmail.size() <= 160)) &&
+        (!('parentName' in data) || (data.parentName is string && data.parentName.size() <= 200)) &&
+        (!('parentPhone' in data) || (data.parentPhone is string && data.parentPhone.size() <= 40)) &&
+        (!('parentEmail' in data) || (data.parentEmail is string && data.parentEmail.size() <= 160)) &&
+        (!('selectedZone' in data) || (data.selectedZone is string && data.selectedZone.size() <= 40)) &&
+        (!('selectedFellowship' in data) || (data.selectedFellowship is string && data.selectedFellowship.size() <= 100)) &&
+        data.dedicationYear is number && data.dedicationYear >= 1990 && data.dedicationYear <= 2100 &&
+        data.serviceDate is string && data.serviceDate.size() <= 64 &&
+        (!('originalDateRaw' in data) || (data.originalDateRaw is string && data.originalDateRaw.size() <= 64)) &&
+        data.certificateNumber is string && data.certificateNumber.size() <= 80 &&
+        data.certificateIssued is bool &&
+        (!('officiatingMinister' in data) || (data.officiatingMinister is string && data.officiatingMinister.size() <= 160)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
+        (!('archivalSource' in data) || (data.archivalSource is string && data.archivalSource.size() <= 160)) &&
+        data.createdAt is timestamp &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidInvitationShape(data) {
+      return data.keys().hasAll(['id', 'email', 'role', 'invitedBy', 'invitedByEmail', 'status', 'expiresAt', 'createdAt']) &&
+        data.keys().hasOnly([
+          'id', 'email', 'name', 'role', 'assignedZone', 'assignedFellowship',
+          'invitedBy', 'invitedByEmail', 'status', 'expiresAt', 'createdAt',
+          'usedAt', 'revokedAt', 'revokedBy'
+        ]) &&
+        isValidId(data.id) &&
+        isValidEmailKey(data.email) &&
+        (!('name' in data) || (data.name is string && data.name.size() <= 160)) &&
+        data.role in ['super_admin', 'office_admin', 'pastor', 'fellowship_leader'] &&
+        (!('assignedZone' in data) || (data.assignedZone is string && data.assignedZone.size() <= 40)) &&
+        (!('assignedFellowship' in data) || (data.assignedFellowship is string && data.assignedFellowship.size() <= 100)) &&
+        data.invitedBy is string && data.invitedBy.size() <= 160 &&
+        isValidEmailKey(data.invitedByEmail) &&
+        data.status in ['pending', 'accepted', 'revoked', 'expired'] &&
+        data.expiresAt is string && data.expiresAt.size() <= 64 &&
+        data.createdAt is timestamp &&
+        (!('usedAt' in data) || (data.usedAt is string && data.usedAt.size() <= 64)) &&
+        (!('revokedAt' in data) || (data.revokedAt is string && data.revokedAt.size() <= 64)) &&
+        (!('revokedBy' in data) || (data.revokedBy is string && data.revokedBy.size() <= 160));
+    }
+
+    // ==========================================
+    // COLLECTION RULES
+    // ==========================================
+
+    // 1. Test connection probe
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // 2. Confidential Dedications (PII isolated to verified church staff)
+    match /dedications/{dedicationId} {
+      allow get: if isValidId(dedicationId) && (
+        isOfficeOrSuperAdmin() ||
+        isPastorForZone(existing().selectedZone) ||
+        isLeaderForSingleRecord(existing().selectedZone, existing().selectedFellowship)
+      );
+
+      allow list: if isOfficeOrSuperAdmin() ||
+        isPastorForZone(existing().selectedZone) ||
+        isLeaderForRecord(existing().selectedZone, existing().selectedFellowship);
+
+      // Login-free parent form submission: strictly starts at 'submitted', unconfirmed, atomic with dedication_status
+      allow create: if isValidId(dedicationId) &&
+        isValidDedicationShape(incoming()) &&
+        incoming().id == dedicationId &&
+        incoming().status == 'submitted' &&
+        incoming().leadershipConfirmed == false &&
+        incoming().officeApproved == false &&
+        incoming().certificateIssued == false &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        existsAfter(/databases/$(database)/documents/dedication_status/$(dedicationId));
+
+      // Tiered updates: Admin full edit OR Fellowship Leader endorsement only (unless terminal 'completed' or already officeApproved)
+      allow update: if isValidId(dedicationId) &&
+        incoming().id == existing().id &&
+        incoming().updatedAt == request.time && (
+          (
+            isValidDedicationShape(incoming()) &&
+            incoming().createdAt == existing().createdAt &&
+            (isOfficeOrSuperAdmin() || isPastorForZone(existing().selectedZone))
+          ) ||
+          (
+            existing().status != 'completed' &&
+            (!('officeApproved' in existing()) || existing().officeApproved != true) &&
+            isLeaderForSingleRecord(existing().selectedZone, existing().selectedFellowship) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'leadershipConfirmed', 'fellowshipLeaderName', 'fellowshipConfirmedAt',
+              'fellowshipNotes', 'status', 'updatedAt'
+            ]) &&
+            isValidLeaderEndorsementFields(incoming())
+          )
+        );
+
+      allow delete: if isValidId(dedicationId) && isOfficeOrSuperAdmin();
+    }
+
+    // 3. Public PII-Free Dedication Status Projection (Login-Free Parent Tracker)
+    match /dedication_status/{dedicationId} {
+      allow get: if isValidId(dedicationId);
+      allow list: if existing().id is string;
+
+      allow create: if isValidId(dedicationId) &&
+        isValidDedicationStatusShape(incoming()) &&
+        incoming().id == dedicationId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          (
+            incoming().status == 'submitted' &&
+            incoming().leadershipConfirmed == false &&
+            incoming().officeApproved == false &&
+            incoming().certificateIssued == false &&
+            existsAfter(/databases/$(database)/documents/dedications/$(dedicationId))
+          ) ||
+          (
+            exists(/databases/$(database)/documents/dedications/$(dedicationId)) && (
+              isOfficeOrSuperAdmin() ||
+              isPastorForZone(incoming().selectedZone) ||
+              (
+                isLeaderForSingleRecord(
+                  get(/databases/$(database)/documents/dedications/$(dedicationId)).data.selectedZone,
+                  get(/databases/$(database)/documents/dedications/$(dedicationId)).data.selectedFellowship
+                ) &&
+                incoming().selectedZone == get(/databases/$(database)/documents/dedications/$(dedicationId)).data.selectedZone &&
+                incoming().selectedFellowship == get(/databases/$(database)/documents/dedications/$(dedicationId)).data.selectedFellowship &&
+                incoming().status in ['submitted', 'fellowship_confirmed'] &&
+                incoming().officeApproved == false &&
+                incoming().certificateIssued == false
+              )
+            )
+          )
+        );
+
+      allow update: if isValidId(dedicationId) &&
+        incoming().id == existing().id &&
+        incoming().updatedAt == request.time && (
+          (
+            isValidDedicationStatusShape(incoming()) &&
+            incoming().createdAt == existing().createdAt &&
+            (isOfficeOrSuperAdmin() || isPastorForZone(existing().selectedZone))
+          ) ||
+          (
+            existing().status != 'completed' &&
+            (!('officeApproved' in existing()) || existing().officeApproved != true) &&
+            (
+              isLeaderForSingleRecord(existing().selectedZone, existing().selectedFellowship) ||
+              (
+                exists(/databases/$(database)/documents/dedications/$(dedicationId)) &&
+                isLeaderForSingleRecord(
+                  get(/databases/$(database)/documents/dedications/$(dedicationId)).data.selectedZone,
+                  get(/databases/$(database)/documents/dedications/$(dedicationId)).data.selectedFellowship
+                )
+              )
+            ) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'leadershipConfirmed', 'status', 'updatedAt'
+            ]) &&
+            isValidStatusLeaderEndorsementFields(incoming())
+          )
+        );
+
+      allow delete: if isValidId(dedicationId) && isOfficeOrSuperAdmin();
+    }
+
+    // 4. Staff Roles Directory (keyed by lowercase email)
+    match /staff_roles/{staffEmail} {
+      allow get: if isValidEmailKey(staffEmail) && (
+        isOfficeOrSuperAdmin() ||
+        (isSignedIn() && callerEmail() == staffEmail.lower())
+      );
+      allow list: if isOfficeOrSuperAdmin();
+
+      allow create: if isValidEmailKey(staffEmail) &&
+        isSuperAdmin() &&
+        isValidStaffRoleShape(incoming()) &&
+        incoming().email.lower() == staffEmail.lower() &&
+        incoming().createdAt == request.time;
+
+      allow update: if isValidEmailKey(staffEmail) &&
+        isValidStaffRoleShape(incoming()) &&
+        incoming().email == existing().email &&
+        incoming().createdAt == existing().createdAt && (
+          isSuperAdmin() ||
+          (
+            isSignedIn() &&
+            callerEmail() == staffEmail.lower() &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['lastLoginAt', 'name', 'avatar'])
+          )
+        );
+
+      allow delete: if isValidEmailKey(staffEmail) && isSuperAdmin();
+    }
+
+    // 5. Historical Past Dedications Archive (Strictly Admin / Office / Pastor only)
+    match /past_dedications/{pastId} {
+      allow get: if isValidId(pastId) && (isOfficeOrSuperAdmin() || isPastor());
+      allow list: if isOfficeOrSuperAdmin() || isPastor();
+
+      allow create: if isValidId(pastId) &&
+        isOfficeOrSuperAdmin() &&
+        isValidPastDedicationShape(incoming()) &&
+        incoming().id == pastId &&
+        incoming().createdAt == request.time;
+
+      allow update: if isValidId(pastId) &&
+        isOfficeOrSuperAdmin() &&
+        isValidPastDedicationShape(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt;
+
+      allow delete: if isValidId(pastId) && isOfficeOrSuperAdmin();
+    }
+
+    // 6. Staff Invitations Registry (Super Admin only)
+    match /invitations/{invitationId} {
+      allow get: if isValidId(invitationId) && isSuperAdmin();
+      allow list: if isSuperAdmin();
+
+      allow create: if isValidId(invitationId) &&
+        isSuperAdmin() &&
+        isValidInvitationShape(incoming()) &&
+        incoming().id == invitationId &&
+        incoming().createdAt == request.time;
+
+      allow update: if isValidId(invitationId) &&
+        isSuperAdmin() &&
+        isValidInvitationShape(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt;
+
+      allow delete: if isValidId(invitationId) && isSuperAdmin();
+    }
+  }
+}

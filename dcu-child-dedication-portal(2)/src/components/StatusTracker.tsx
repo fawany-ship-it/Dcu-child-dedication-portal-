@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Baby, CheckCircle, Clock, Calendar, Church, Shield, Printer, AlertCircle, Phone, MapPin, UserCheck, Building2, Award } from 'lucide-react';
+import { Search, Baby, CheckCircle, Clock, Printer, AlertCircle, Award, Users } from 'lucide-react';
 import { DedicationRecord } from '../types';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { syncLocalSubmissionsToFirestore } from '../services/firestoreService';
 
 interface StatusTrackerProps {
   dedications: DedicationRecord[];
@@ -23,16 +24,28 @@ export function StatusTracker({ dedications, initialSearchQuery = '', onOpenCert
   const [verifyPhone, setVerifyPhone] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [matchedRecords, setMatchedRecords] = useState<any[]>([]);
   const [trackedRecord, setTrackedRecord] = useState<any | null>(null);
   const [deviceSubmissions, setDeviceSubmissions] = useState<any[]>([]);
 
-  const handleTrackItem = (id: string, phone?: string) => {
+  const handleTrackItem = (id: string, phone?: string, preferredChildName?: string) => {
     setRefId(id);
     if (phone) setVerifyPhone(phone);
     setLoading(true);
     setError('');
-    api.trackDedication(id, phone).then((res) => {
-      setTrackedRecord(res);
+    setMatchedRecords([]);
+    setTrackedRecord(null);
+
+    api.trackDedications(id, phone).then((matches) => {
+      setMatchedRecords(matches);
+      if (preferredChildName) {
+        const exact = matches.find(
+          (m) => String(m.childName || '').toLowerCase().trim() === preferredChildName.toLowerCase().trim()
+        );
+        setTrackedRecord(exact || matches[0] || null);
+      } else {
+        setTrackedRecord(matches[0] || null);
+      }
     }).catch((err: any) => {
       setError(err?.message || 'Application not found.');
     }).finally(() => {
@@ -41,14 +54,21 @@ export function StatusTracker({ dedications, initialSearchQuery = '', onOpenCert
   };
 
   useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('dcu_parent_recent_submissions') || '[]');
-      if (Array.isArray(stored)) {
-        setDeviceSubmissions(stored);
+    const loadDeviceList = () => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('dcu_parent_recent_submissions') || '[]');
+        if (Array.isArray(stored)) {
+          setDeviceSubmissions(stored);
+        }
+      } catch {
+        // localStorage restricted
       }
-    } catch {
-      // localStorage restricted
-    }
+    };
+
+    loadDeviceList();
+    syncLocalSubmissionsToFirestore().then((uploaded) => {
+      if (uploaded > 0) loadDeviceList();
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -61,20 +81,22 @@ export function StatusTracker({ dedications, initialSearchQuery = '', onOpenCert
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setMatchedRecords([]);
     setTrackedRecord(null);
 
     const cleanId = refId.trim();
     if (!cleanId) {
-      setError('Please provide your Dedication Reference ID (e.g. DED-2026-001).');
+      setError('Please provide your Dedication Reference ID, Child Name, or Phone Number.');
       return;
     }
 
     setLoading(true);
     try {
-      const result = await api.trackDedication(cleanId, verifyPhone.trim() || undefined);
-      setTrackedRecord(result);
+      const matches = await api.trackDedications(cleanId, verifyPhone.trim() || undefined);
+      setMatchedRecords(matches);
+      setTrackedRecord(matches[0] || null);
     } catch (err: any) {
-      setError(err?.message || 'Application not found. Please verify the Reference ID and Phone Number.');
+      setError(err?.message || 'Application not found. Please verify the Reference ID, Child Name, or Phone Number.');
     } finally {
       setLoading(false);
     }
@@ -105,7 +127,7 @@ export function StatusTracker({ dedications, initialSearchQuery = '', onOpenCert
         </div>
 
         <p className="text-sm text-gray-600 max-w-lg mx-auto">
-          Track your child's progress through fellowship confirmation and church office approval anytime. Search using your <strong>Dedication Reference ID</strong>, <strong>Child's Full Name</strong>, or registered <strong>Phone Number</strong>.
+          Track your child's progress through fellowship confirmation and church office approval anytime. Search using your <strong>Dedication Reference ID</strong>, <strong>Child's Full Name</strong>, or registered <strong>Phone Number</strong> (shows all children registered together).
         </p>
 
         {/* 24 Hour Verification Notice */}
@@ -167,8 +189,14 @@ export function StatusTracker({ dedications, initialSearchQuery = '', onOpenCert
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {(deviceSubmissions.length > 0 ? deviceSubmissions : dedications).map((d: any) => (
               <button
-                key={d.id}
-                onClick={() => handleTrackItem(d.id, d.phone || d.parentPhone || d.fatherPhone || d.motherPhone)}
+                key={`${d.id}::${d.childName || ''}`}
+                onClick={() =>
+                  handleTrackItem(
+                    d.id,
+                    d.phone || d.parentPhone || d.fatherPhone || d.motherPhone,
+                    d.childName
+                  )
+                }
                 className="p-3.5 rounded-2xl border border-amber-200 bg-amber-50/60 hover:bg-amber-100/70 text-left transition-all cursor-pointer flex items-center justify-between group shadow-xs"
               >
                 <div>
@@ -196,12 +224,61 @@ export function StatusTracker({ dedications, initialSearchQuery = '', onOpenCert
         </div>
       )}
 
+      {/* Multi-Child Selector when search returns multiple children (e.g. siblings under same parent phone or family surname) */}
+      {matchedRecords.length > 1 && (
+        <div className="bg-[#fbf5e6] p-5 rounded-3xl border-2 border-[#d4af37] shadow-sm space-y-3 animate-in fade-in">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h3 className="text-xs sm:text-sm font-bold uppercase text-[#2a170e] tracking-wider flex items-center gap-2">
+              <Users className="w-4 h-4 text-[#aa8222]" />
+              {matchedRecords.length} Children Found — Select a Child to View Status
+            </h3>
+            <span className="text-[11px] font-semibold text-amber-900">
+              All matching siblings are listed below
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {matchedRecords.map((rec) => {
+              const isSelected = trackedRecord?.id === rec.id && trackedRecord?.childName === rec.childName;
+              return (
+                <button
+                  key={`${rec.id}::${rec.childName}`}
+                  type="button"
+                  onClick={() => setTrackedRecord(rec)}
+                  className={`p-3.5 rounded-2xl border-2 text-left transition-all cursor-pointer flex items-center justify-between ${
+                    isSelected
+                      ? 'bg-[#2a170e] text-white border-[#d4af37] shadow-md'
+                      : 'bg-white text-gray-900 border-amber-200 hover:border-[#d4af37]'
+                  }`}
+                >
+                  <div>
+                    <span
+                      className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                        isSelected ? 'bg-[#d4af37] text-[#2a170e]' : 'bg-amber-100 text-amber-900'
+                      }`}
+                    >
+                      {rec.id}
+                    </span>
+                    <p className="font-bold text-sm mt-1">{rec.childName}</p>
+                    <p className={`text-[11px] mt-0.5 ${isSelected ? 'text-[#ffd700]' : 'text-gray-500'}`}>
+                      {rec.selectedZone} • {rec.selectedFellowship}
+                    </p>
+                  </div>
+                  <span className={`text-xs font-bold ${isSelected ? 'text-[#ffd700]' : 'text-[#2a170e]'}`}>
+                    {isSelected ? 'Viewing' : 'View →'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Results Section */}
       {trackedRecord && (
         <div className="bg-white rounded-3xl shadow-lg border-2 border-[#d4af37]/40 p-6 sm:p-8 space-y-6 animate-in fade-in zoom-in-95">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-100 pb-5">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-mono font-bold bg-[#fbf5e6] text-[#2a170e] px-2.5 py-1 rounded-md border border-[#d4af37]/30">
                   {trackedRecord.id}
                 </span>

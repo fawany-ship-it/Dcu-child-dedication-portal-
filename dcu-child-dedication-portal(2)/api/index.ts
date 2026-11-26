@@ -1009,8 +1009,10 @@ app.get('/api/dedications', (req: Request, res: Response) => {
     if (!user.assignedZone) return res.json([]);
     let filtered = memoryDedications.filter(d => d.selectedZone === user.assignedZone);
     if (user.assignedFellowship) {
-      const target = user.assignedFellowship.toLowerCase().trim();
-      filtered = filtered.filter(d => (d.selectedFellowship || '').toLowerCase().trim() === target);
+      const target = user.assignedFellowship.replace(/\s+(fellowship|micro[\s-]*church)$/i, '').toLowerCase().trim();
+      filtered = filtered.filter(
+        d => (d.selectedFellowship || '').replace(/\s+(fellowship|micro[\s-]*church)$/i, '').toLowerCase().trim() === target
+      );
     }
     return res.json(filtered);
   }
@@ -1033,8 +1035,15 @@ app.post('/api/dedications', (req: Request, res: Response) => {
   if (!rec.childName || !rec.childDob) {
     return res.status(400).json({ error: 'Child name and date of birth are required.' });
   }
+  const currentYear = new Date().getFullYear();
+  const clientProvidedId =
+    typeof rec.id === 'string' && /^[a-zA-Z0-9_\-]{3,128}$/.test(rec.id)
+      ? rec.id
+      : null;
+  const generatedUniqueId = `DED-${currentYear}-${Date.now().toString(36).toUpperCase().slice(-5)}${Math.random().toString(36).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4).padEnd(4, 'X')}`;
+
   const newRec: DedicationRecord = {
-    id: `DED-${new Date().getFullYear()}-${String(memoryDedications.length + 1).padStart(3, '0')}`,
+    id: clientProvidedId || generatedUniqueId,
     childName: rec.childName,
     childDob: rec.childDob,
     childGender: rec.childGender === 'Female' ? 'Female' : 'Male',
@@ -1074,20 +1083,27 @@ app.get('/api/dedications/track', (req: Request, res: Response) => {
 
   const cleanQuery = id.toLowerCase();
   const cleanDigits = (phone || id).replace(/[^\d]/g, '');
-  const found = memoryDedications.find(d =>
-    d.id.toLowerCase() === cleanQuery ||
-    (d.certificateNumber && d.certificateNumber.toLowerCase() === cleanQuery) ||
-    d.childName.toLowerCase().includes(cleanQuery) ||
-    (cleanDigits.length >= 7 && (
-      (d.fatherPhone || '').replace(/[^\d]/g, '').includes(cleanDigits) ||
-      (d.motherPhone || '').replace(/[^\d]/g, '').includes(cleanDigits) ||
-      (d.parentPhone || '').replace(/[^\d]/g, '').includes(cleanDigits)
-    ))
-  );
-  if (!found) {
+  const matches = memoryDedications.filter(d => {
+    if (d.id.toLowerCase() === cleanQuery) return true;
+    if (d.certificateNumber && d.certificateNumber.toLowerCase() === cleanQuery) return true;
+    if (cleanQuery.length >= 3 && d.childName.toLowerCase().includes(cleanQuery)) return true;
+    if (cleanDigits.length >= 7) {
+      const fClean = (d.fatherPhone || '').replace(/[^\d]/g, '');
+      const mClean = (d.motherPhone || '').replace(/[^\d]/g, '');
+      const pClean = (d.parentPhone || '').replace(/[^\d]/g, '');
+      if ((fClean && (fClean.includes(cleanDigits) || cleanDigits.includes(fClean))) ||
+          (mClean && (mClean.includes(cleanDigits) || cleanDigits.includes(mClean))) ||
+          (pClean && (pClean.includes(cleanDigits) || cleanDigits.includes(pClean)))) {
+        return true;
+      }
+    }
+    return false;
+  });
+  if (matches.length === 0) {
     return res.status(404).json({ error: 'Record not found. Please verify your Reference ID, Child Name, or Phone Number.' });
   }
-  return res.json({
+
+  const sanitized = matches.map((found) => ({
     id: found.id,
     childName: found.childName,
     status: found.status,
@@ -1100,6 +1116,11 @@ app.get('/api/dedications/track', (req: Request, res: Response) => {
     selectedFellowship: found.selectedFellowship,
     createdAt: found.createdAt,
     updatedAt: found.updatedAt
+  }));
+
+  return res.json({
+    ...sanitized[0],
+    matches: sanitized
   });
 });
 
@@ -1117,7 +1138,8 @@ app.put('/api/dedications/:id', (req: Request, res: Response) => {
   if (role === 'fellowship_leader') {
     const sameZone = Boolean(user.assignedZone) && current.selectedZone === user.assignedZone;
     const sameFellowship = !user.assignedFellowship ||
-      (current.selectedFellowship || '').toLowerCase().trim() === user.assignedFellowship.toLowerCase().trim();
+      (current.selectedFellowship || '').replace(/\s+(fellowship|micro[\s-]*church)$/i, '').toLowerCase().trim() ===
+        user.assignedFellowship.replace(/\s+(fellowship|micro[\s-]*church)$/i, '').toLowerCase().trim();
     if (!sameZone || !sameFellowship) {
       return res.status(403).json({ error: 'Access denied: Out of your assigned fellowship.' });
     }

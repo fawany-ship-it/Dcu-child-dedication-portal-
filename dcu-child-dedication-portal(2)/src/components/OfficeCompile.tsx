@@ -3,9 +3,10 @@ import { DedicationRecord, UserProfile, StaffInvitation, AuditLog, UserRole } fr
 import { ZONES, MONTHLY_DEDICATION_DATES } from '../data/zones';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
+import { formatFirestoreUiError } from '../lib/firebase';
 import { 
   Building2, CheckCircle2, Clock, Search, Filter, Shield, Award, 
-  Printer, Check, AlertTriangle, FileCheck, Phone, ChevronRight,
+  Printer, Check, AlertTriangle, AlertCircle, FileCheck, Phone, ChevronRight,
   Edit3, Users, UserCheck, X, Save, RefreshCw, KeyRound, Mail, Calendar, MapPin,
   UserPlus, UserX, Copy, CheckSquare, ShieldAlert, History, Download, Trash2
 } from 'lucide-react';
@@ -17,7 +18,9 @@ interface OfficeCompileProps {
 }
 
 export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertificate }: OfficeCompileProps) {
-  const { user, isSuperAdmin } = useAuth();
+  const { user, firebaseUser, connectCloudSync, isSuperAdmin } = useAuth();
+  const [cloudConnecting, setCloudConnecting] = useState(false);
+  const [cloudError, setCloudError] = useState('');
 
   const [selectedZone, setSelectedZone] = useState('All');
   const [selectedMonth, setSelectedMonth] = useState('All');
@@ -60,6 +63,19 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
   const [editFormData, setEditFormData] = useState<Partial<DedicationRecord>>({});
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editSuccessMsg, setEditSuccessMsg] = useState('');
+  const [editError, setEditError] = useState('');
+
+  // Global inline feedback & confirmation modal state
+  const [actionError, setActionError] = useState('');
+  const [actionSuccess, setActionSuccess] = useState('');
+  const [confirmModal, setConfirmModal] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    tone: 'danger' | 'amber';
+    onConfirm: () => Promise<void>;
+  } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
   // Fetch users when component mounts
   const fetchUsers = async () => {
@@ -104,7 +120,7 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
       fetchInvitations();
       fetchAuditLogs();
     }
-  }, [isSuperAdmin]);
+  }, [isSuperAdmin, firebaseUser]);
 
   // Categorize dedication records
   const leaderApprovedRecords = dedications.filter(d => d.leadershipConfirmed && !d.officeApproved);
@@ -133,6 +149,8 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
   });
 
   const handleOverrideFellowshipApprove = async (record: DedicationRecord) => {
+    setActionError('');
+    setActionSuccess('');
     try {
       await onUpdateDedication(record.id, {
         leadershipConfirmed: true,
@@ -141,13 +159,16 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
         fellowshipNotes: 'Directly confirmed from fellowship level by Church Office & Pastor due to leader delay or absence.',
         status: 'fellowship_confirmed'
       });
+      setActionSuccess(`Fellowship confirmation applied for ${record.childName}.`);
     } catch (e) {
       console.error('Override failed:', e);
-      alert('Override failed. Please try again.');
+      setActionError(formatFirestoreUiError(e, 'Override failed. Please try again.'));
     }
   };
 
   const handleOfficeApprove = async (record: DedicationRecord) => {
+    setActionError('');
+    setActionSuccess('');
     const certNum = record.certificateNumber || `DCU-DED-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
     try {
       await onUpdateDedication(record.id, {
@@ -159,20 +180,25 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
         certificateNumber: certNum,
         serviceDate: record.serviceDate || '2026-11-29'
       });
+      setActionSuccess(`Office approval confirmed and certificate ${certNum} prepared for ${record.childName}.`);
     } catch (e) {
       console.error('Office approve failed:', e);
-      alert('Approval failed. Please try again.');
+      setActionError(formatFirestoreUiError(e, 'Approval failed. Please try again.'));
     }
   };
 
   const handleMarkCompleted = async (record: DedicationRecord) => {
+    setActionError('');
+    setActionSuccess('');
     try {
       await onUpdateDedication(record.id, {
         status: 'completed',
         certificateIssued: true
       });
+      setActionSuccess(`${record.childName} marked as Dedicated & Completed.`);
     } catch (e) {
       console.error('Mark completed failed:', e);
+      setActionError(formatFirestoreUiError(e, 'Failed to mark record as completed.'));
     }
   };
 
@@ -196,12 +222,14 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
       serviceDate: record.serviceDate
     });
     setEditSuccessMsg('');
+    setEditError('');
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRecord) return;
     setIsSavingEdit(true);
+    setEditError('');
     try {
       await onUpdateDedication(editingRecord.id, editFormData);
       setEditSuccessMsg('Parent form updated successfully! Mistakes corrected.');
@@ -211,7 +239,7 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
       }, 900);
     } catch (err) {
       console.error('Save failed:', err);
-      alert('Failed to save corrections.');
+      setEditError(formatFirestoreUiError(err, 'Failed to save corrections. Please check your permissions and try again.'));
     } finally {
       setIsSavingEdit(false);
     }
@@ -219,45 +247,62 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
 
   // User management updates
   const handleUpdateUserRole = async (userId: string, newRole: string, newZone?: string) => {
+    setActionError('');
+    setActionSuccess('');
     try {
       await api.updateUserRole(userId, newRole, newZone);
       fetchUsers();
+      setActionSuccess('Staff role updated successfully.');
     } catch (err: any) {
-      alert(err?.message || 'Failed to update user role');
+      setActionError(formatFirestoreUiError(err, 'Failed to update user role.'));
     }
   };
 
-  const handleToggleUserSuspension = async (u: UserProfile) => {
+  const handleToggleUserSuspension = (u: UserProfile) => {
     const nextState = !u.isSuspended;
-    const confirmMsg = nextState
-      ? `Suspend user ${u.name} (${u.email})? Their active sessions will be terminated immediately.`
-      : `Re-activate user ${u.name} (${u.email})?`;
-    if (!window.confirm(confirmMsg)) return;
-
-    try {
-      await api.updateUserStatus(u.id, nextState);
-      fetchUsers();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to update suspension status');
-    }
+    setActionError('');
+    setActionSuccess('');
+    setConfirmModal({
+      title: nextState ? 'Suspend Staff Account' : 'Reactivate Staff Account',
+      message: nextState
+        ? `Suspend ${u.name} (${u.email})? Their active sessions will be blocked immediately.`
+        : `Re-activate ${u.name} (${u.email}) so they can access the portal again?`,
+      confirmLabel: nextState ? 'Suspend Account' : 'Reactivate Account',
+      tone: 'amber',
+      onConfirm: async () => {
+        try {
+          await api.updateUserStatus(u.id, nextState);
+          await fetchUsers();
+          setActionSuccess(nextState ? `${u.name} has been suspended.` : `${u.name} has been reactivated.`);
+        } catch (err: any) {
+          setActionError(formatFirestoreUiError(err, 'Failed to update suspension status.'));
+        }
+      }
+    });
   };
 
-  const handleDeleteUser = async (u: UserProfile) => {
+  const handleDeleteUser = (u: UserProfile) => {
+    setActionError('');
+    setActionSuccess('');
     if (u.id === user?.id) {
-      alert('You cannot delete your own administrative account.');
+      setActionError('You cannot delete your own administrative account.');
       return;
     }
-    const confirmDelete = window.confirm(
-      `Are you sure you want to permanently delete staff account for ${u.name} (${u.email})?\n\nThis will remove their profile and immediately revoke all active sessions.`
-    );
-    if (!confirmDelete) return;
-
-    try {
-      await api.deleteUser(u.id);
-      fetchUsers();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to delete user');
-    }
+    setConfirmModal({
+      title: 'Delete Staff Account',
+      message: `Permanently delete the staff account for ${u.name} (${u.email})? This removes their profile and revokes active access immediately.`,
+      confirmLabel: 'Delete Account',
+      tone: 'danger',
+      onConfirm: async () => {
+        try {
+          await api.deleteUser(u.id);
+          await fetchUsers();
+          setActionSuccess(`Removed staff account for ${u.name}.`);
+        } catch (err: any) {
+          setActionError(formatFirestoreUiError(err, 'Failed to delete user account.'));
+        }
+      }
+    });
   };
 
   const availableFellowshipsForInvite = ZONES.find((z) => z.name === inviteZone)?.fellowships || [];
@@ -308,14 +353,24 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
     }
   };
 
-  const handleRevokeInvite = async (invId: string) => {
-    if (!window.confirm('Revoke this staff invitation token? The recipient will not be able to activate access.')) return;
-    try {
-      await api.revokeInvitation(invId);
-      fetchInvitations();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to revoke invitation');
-    }
+  const handleRevokeInvite = (invId: string) => {
+    setActionError('');
+    setActionSuccess('');
+    setConfirmModal({
+      title: 'Revoke Staff Invitation',
+      message: 'Revoke this single-use staff invitation token? The recipient will no longer be able to activate access with it.',
+      confirmLabel: 'Revoke Invitation',
+      tone: 'danger',
+      onConfirm: async () => {
+        try {
+          await api.revokeInvitation(invId);
+          await fetchInvitations();
+          setActionSuccess('Staff invitation revoked.');
+        } catch (err: any) {
+          setActionError(formatFirestoreUiError(err, 'Failed to revoke invitation.'));
+        }
+      }
+    });
   };
 
   const filteredUsers = usersList.filter(u => 
@@ -337,6 +392,76 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
 
   return (
     <div className="space-y-6 pb-12">
+      {/* Cloud Sync Banner if signed in via Email+Password only */}
+      {user && !firebaseUser && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 to-amber-100 border-2 border-[#d4af37] text-[#2a170e] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-xs sm:text-sm text-[#2a170e]">
+                Action Required: Connect Google Cloud Sync
+              </p>
+              <p className="text-xs text-amber-950/90 mt-0.5">
+                Sign in with your Google account ({user.email}) once so parent forms, staff invitations, and login timestamps sync live across all devices.
+              </p>
+              {cloudError && <p className="text-xs text-red-700 font-bold mt-1">{cloudError}</p>}
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={cloudConnecting}
+            onClick={async () => {
+              setCloudError('');
+              setCloudConnecting(true);
+              try {
+                await connectCloudSync();
+              } catch (err: any) {
+                setCloudError(err?.message || 'Unable to connect Google Cloud Sync.');
+              } finally {
+                setCloudConnecting(false);
+              }
+            }}
+            className="px-4 py-2.5 bg-[#2a170e] hover:bg-[#3d2314] text-[#ffd700] border border-[#d4af37] font-bold text-xs rounded-xl transition-all shrink-0 cursor-pointer shadow-md whitespace-nowrap"
+          >
+            {cloudConnecting ? 'Connecting...' : 'Connect Google Cloud Sync'}
+          </button>
+        </div>
+      )}
+
+      {actionError && (
+        <div className="p-4 rounded-2xl bg-red-50 border border-red-200 text-xs sm:text-sm text-red-700 flex items-start justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <span>{actionError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActionError('')}
+            aria-label="Dismiss error"
+            className="text-red-500 hover:text-red-800 cursor-pointer shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {actionSuccess && (
+        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs sm:text-sm text-emerald-800 flex items-start justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            <span>{actionSuccess}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActionSuccess('')}
+            aria-label="Dismiss message"
+            className="text-emerald-600 hover:text-emerald-900 cursor-pointer shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Office Header */}
       <div className="bg-gradient-to-r from-[#2a170e] via-[#331c11] to-[#221107] text-white p-6 sm:p-8 rounded-3xl shadow-xl border-2 border-[#d4af37]/40 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -928,24 +1053,47 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                           {new Date(inv.expiresAt).toLocaleDateString()}
                         </td>
                         <td className="py-3.5 px-4">
-                          {inv.status === 'accepted' ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-md border border-emerald-300">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                              Accepted & Logged On
-                            </span>
-                          ) : inv.status === 'revoked' ? (
-                            <span className="text-[11px] font-bold text-red-800 bg-red-100 px-2.5 py-1 rounded-md">Revoked</span>
-                          ) : inv.status === 'expired' ? (
-                            <span className="text-[11px] font-bold text-gray-600 bg-gray-100 px-2.5 py-1 rounded-md">Expired</span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-md border border-amber-300">
-                              <Clock className="w-3 h-3 text-amber-600" />
-                              Pending (Not Yet Logged On)
-                            </span>
-                          )}
+                          {(() => {
+                            const matchedUser = usersList.find(
+                              (u) => u.email.toLowerCase() === inv.email.toLowerCase()
+                            );
+                            const isLoggedInUser =
+                              inv.status === 'accepted' || Boolean(matchedUser?.lastLoginAt);
+                            if (isLoggedInUser) {
+                              return (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-md border border-emerald-300">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                                  Accepted &amp; Logged On
+                                </span>
+                              );
+                            }
+                            if (inv.status === 'revoked') {
+                              return (
+                                <span className="text-[11px] font-bold text-red-800 bg-red-100 px-2.5 py-1 rounded-md">
+                                  Revoked
+                                </span>
+                              );
+                            }
+                            if (inv.status === 'expired') {
+                              return (
+                                <span className="text-[11px] font-bold text-gray-600 bg-gray-100 px-2.5 py-1 rounded-md">
+                                  Expired
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-md border border-amber-300">
+                                <Clock className="w-3 h-3 text-amber-600" />
+                                Pending (Not Yet Logged On)
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="py-3.5 px-4 text-right">
-                          {inv.status === 'pending' && (
+                          {inv.status === 'pending' &&
+                            !usersList.some(
+                              (u) => u.email.toLowerCase() === inv.email.toLowerCase() && u.lastLoginAt
+                            ) && (
                             <button
                               onClick={() => handleRevokeInvite(inv.id)}
                               className="text-[10px] bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 px-2.5 py-1 rounded-md font-bold cursor-pointer"
@@ -1288,6 +1436,13 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
               </button>
             </div>
 
+            {editError && (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{editError}</span>
+              </div>
+            )}
+
             {editSuccessMsg && (
               <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
@@ -1382,6 +1537,53 @@ export function OfficeCompile({ dedications, onUpdateDedication, onOpenCertifica
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* IN-APP CONFIRMATION MODAL */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl border-2 border-[#d4af37]/60 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3">
+              <div className={`p-2.5 rounded-2xl shrink-0 ${confirmModal.tone === 'danger' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'}`}>
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1 flex-1">
+                <h3 className="text-base font-cinzel font-bold text-[#2a170e]">{confirmModal.title}</h3>
+                <p className="text-xs text-gray-600 leading-relaxed">{confirmModal.message}</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                disabled={confirmBusy}
+                onClick={() => setConfirmModal(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-gray-700 border border-gray-300 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={confirmBusy}
+                onClick={async () => {
+                  setConfirmBusy(true);
+                  try {
+                    await confirmModal.onConfirm();
+                    setConfirmModal(null);
+                  } finally {
+                    setConfirmBusy(false);
+                  }
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-bold text-white shadow-sm cursor-pointer disabled:opacity-50 ${
+                  confirmModal.tone === 'danger'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-amber-700 hover:bg-amber-800'
+                }`}
+              >
+                {confirmBusy ? 'Processing...' : confirmModal.confirmLabel}
+              </button>
+            </div>
           </div>
         </div>
       )}
