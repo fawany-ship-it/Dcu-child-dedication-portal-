@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { PastDedicationRecord, DedicationRecord } from '../types';
 import { api } from '../services/api';
+import { formatFirestoreUiError } from '../lib/firebase';
 import { 
   Download, Upload, Search, Award, CheckCircle2, Calendar, Phone, 
   MapPin, Printer, BookOpen, Plus, Filter, Database, FileSpreadsheet,
@@ -187,6 +188,9 @@ export function PastDataList({
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState('');
   const [importSuccessMessage, setImportSuccessMessage] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<PastDedicationRecord | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState('');
 
   // Add / Edit form state
   const [formData, setFormData] = useState<Partial<PastDedicationRecord>>({
@@ -691,9 +695,24 @@ export function PastDataList({
     });
   };
 
-  const handleDeleteClick = async (record: PastDedicationRecord) => {
-    if (window.confirm(`Are you sure you want to delete archival record for ${record.childName} (${record.certificateNumber})?`)) {
-      await onDeletePastDedication(record.id);
+  const handleDeleteClick = (record: PastDedicationRecord) => {
+    setArchiveError('');
+    setPendingDelete(record);
+  };
+
+  const handleConfirmArchiveDelete = async () => {
+    if (!pendingDelete) return;
+    const target = pendingDelete;
+    setDeletingId(target.id);
+    setArchiveError('');
+    try {
+      await onDeletePastDedication(target.id);
+      setPendingDelete(null);
+    } catch (err) {
+      setArchiveError(formatFirestoreUiError(err, 'Unable to delete archival record. Please verify your permissions and try again.'));
+      setPendingDelete(null);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -1657,6 +1676,58 @@ export function PastDataList({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* IN-APP ARCHIVE ERROR & DELETE CONFIRMATION MODAL */}
+      {archiveError && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-md bg-red-50 border border-red-300 text-red-800 px-4 py-3 rounded-2xl shadow-xl flex items-start gap-2.5 text-xs">
+          <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+          <span className="flex-1">{archiveError}</span>
+          <button
+            type="button"
+            onClick={() => setArchiveError('')}
+            aria-label="Dismiss error"
+            className="text-red-500 hover:text-red-800 cursor-pointer shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl border-2 border-[#d4af37]/60 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-2xl bg-red-100 text-red-700 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="space-y-1 flex-1">
+                <h3 className="text-base font-cinzel font-bold text-[#2a170e]">Delete Archival Record</h3>
+                <p className="text-xs text-gray-600 leading-relaxed">
+                  Are you sure you want to permanently delete the archival record for <strong>{pendingDelete.childName}</strong> ({pendingDelete.certificateNumber || pendingDelete.id})?
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                disabled={deletingId === pendingDelete.id}
+                onClick={() => setPendingDelete(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-gray-700 border border-gray-300 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deletingId === pendingDelete.id}
+                onClick={handleConfirmArchiveDelete}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-red-600 hover:bg-red-700 shadow-sm cursor-pointer disabled:opacity-50"
+              >
+                {deletingId === pendingDelete.id ? 'Deleting...' : 'Delete Record'}
+              </button>
+            </div>
           </div>
         </div>
       )}

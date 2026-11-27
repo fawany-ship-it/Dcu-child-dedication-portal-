@@ -7,7 +7,11 @@ import {
 } from 'firebase/auth';
 import { auth, googleProvider } from '../lib/firebase';
 import { UserProfile, UserRole } from '../types';
-import { api, getSessionToken, setSessionToken } from '../services/api';
+import { api, getSessionToken, setSessionToken, setCurrentLocalUser } from '../services/api';
+import {
+  fetchStaffRoleByEmail,
+  updateOwnLastLoginInFirestore,
+} from '../services/firestoreService';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -196,8 +200,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err: any) {
       throw formatFirebasePopupError(err);
     }
-    setFirebaseUser(cred.user);
-    return cred.user;
+    const fbUser = cred.user;
+    const fbEmail = fbUser?.email?.toLowerCase().trim() || '';
+    if (!fbEmail) {
+      await signOut(auth).catch(() => {});
+      throw new Error('Google account did not return a verified email address.');
+    }
+    if (user?.email && user.email.toLowerCase().trim() !== fbEmail) {
+      await signOut(auth).catch(() => {});
+      throw new Error(
+        `Please sign in with your invited church email (${user.email}) rather than ${fbEmail}.`
+      );
+    }
+
+    setFirebaseUser(fbUser);
+
+    // Stamp lastLoginAt in Firestore so Admin directory shows active status immediately
+    const stamped = await updateOwnLastLoginInFirestore(
+      fbEmail,
+      fbUser.displayName || user?.name,
+      fbUser.photoURL || user?.avatar
+    );
+
+    const cloudRole = await fetchStaffRoleByEmail(fbEmail);
+    if (cloudRole) {
+      if (cloudRole.isSuspended) {
+        await signOut(auth).catch(() => {});
+        setFirebaseUser(null);
+        throw new Error('This account has been suspended by administration.');
+      }
+      const nextProfile: UserProfile = {
+        ...cloudRole,
+        name: fbUser.displayName || cloudRole.name,
+        avatar: fbUser.photoURL || cloudRole.avatar,
+        lastLoginAt: stamped ? new Date().toISOString() : cloudRole.lastLoginAt || new Date().toISOString(),
+      };
+      setUser(nextProfile);
+      setCurrentLocalUser(nextProfile);
+      if (!getSessionToken()) {
+        setSessionToken(`dcu-firebase-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+      }
+    } else if (user && user.role !== 'super_admin') {
+      throw new Error(
+        `Your account (${fbEmail}) has not been synced to the Cloud Directory yet. Ask the Super Administrator to open Office Console while signed in with Google.`
+      );
+    }
+
+    return fbUser;
   };
 
   const acceptInvitation = async (payload: {

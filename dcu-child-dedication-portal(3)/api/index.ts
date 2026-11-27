@@ -1009,8 +1009,10 @@ app.get('/api/dedications', (req: Request, res: Response) => {
     if (!user.assignedZone) return res.json([]);
     let filtered = memoryDedications.filter(d => d.selectedZone === user.assignedZone);
     if (user.assignedFellowship) {
-      const target = user.assignedFellowship.toLowerCase().trim();
-      filtered = filtered.filter(d => (d.selectedFellowship || '').toLowerCase().trim() === target);
+      const target = user.assignedFellowship.replace(/\s+(fellowship|micro[\s-]*church)$/i, '').toLowerCase().trim();
+      filtered = filtered.filter(
+        d => (d.selectedFellowship || '').replace(/\s+(fellowship|micro[\s-]*church)$/i, '').toLowerCase().trim() === target
+      );
     }
     return res.json(filtered);
   }
@@ -1136,7 +1138,8 @@ app.put('/api/dedications/:id', (req: Request, res: Response) => {
   if (role === 'fellowship_leader') {
     const sameZone = Boolean(user.assignedZone) && current.selectedZone === user.assignedZone;
     const sameFellowship = !user.assignedFellowship ||
-      (current.selectedFellowship || '').toLowerCase().trim() === user.assignedFellowship.toLowerCase().trim();
+      (current.selectedFellowship || '').replace(/\s+(fellowship|micro[\s-]*church)$/i, '').toLowerCase().trim() ===
+        user.assignedFellowship.replace(/\s+(fellowship|micro[\s-]*church)$/i, '').toLowerCase().trim();
     if (!sameZone || !sameFellowship) {
       return res.status(403).json({ error: 'Access denied: Out of your assigned fellowship.' });
     }

@@ -42,6 +42,38 @@ const STORAGE_INVITATIONS = `${STORAGE_PREFIX}invitations`;
 const STORAGE_AUDIT_LOGS = `${STORAGE_PREFIX}audit_logs`;
 const STORAGE_CURRENT_USER = `${STORAGE_PREFIX}current_user`;
 const STORAGE_STAFF_PASSPORTS = `${STORAGE_PREFIX}staff_passports_v1`;
+const STORAGE_DELETED_DEDICATIONS = 'dcu_deleted_dedication_ids_v1';
+
+export function getDeletedDedicationIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_DELETED_DEDICATIONS);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markDedicationDeleted(id: string) {
+  try {
+    const set = getDeletedDedicationIds();
+    set.add(id);
+    localStorage.setItem(STORAGE_DELETED_DEDICATIONS, JSON.stringify(Array.from(set).slice(-500)));
+  } catch {
+    // ignore storage limits
+  }
+}
+
+function clearDedicationDeleted(id: string) {
+  try {
+    const set = getDeletedDedicationIds();
+    if (set.delete(id)) {
+      localStorage.setItem(STORAGE_DELETED_DEDICATIONS, JSON.stringify(Array.from(set)));
+    }
+  } catch {
+    // ignore
+  }
+}
 
 let memoryToken: string | null = null;
 let isStaticHostingMode = false;
@@ -278,14 +310,43 @@ function getCurrentLocalUser(): UserProfile | null {
   return null;
 }
 
-function setCurrentLocalUser(user: UserProfile | null) {
+let lastVerifiedCloudEmail: string | null = null;
+
+export function setCurrentLocalUser(user: UserProfile | null) {
   try {
     if (user) {
       localStorage.setItem(STORAGE_CURRENT_USER, JSON.stringify(user));
     } else {
+      lastVerifiedCloudEmail = null;
       localStorage.removeItem(STORAGE_CURRENT_USER);
     }
   } catch {}
+}
+
+async function resolveActiveStaffUser(): Promise<UserProfile | null> {
+  const local = getCurrentLocalUser();
+  if (isFirebaseStaffSignedIn() && auth.currentUser?.email) {
+    const fbEmail = auth.currentUser.email.toLowerCase().trim();
+    if (
+      lastVerifiedCloudEmail !== fbEmail ||
+      !local ||
+      local.email.toLowerCase().trim() !== fbEmail ||
+      local.role === 'parent'
+    ) {
+      const cloudRole = await fetchStaffRoleByEmail(fbEmail);
+      if (cloudRole) {
+        if (cloudRole.isSuspended) {
+          lastVerifiedCloudEmail = null;
+          setCurrentLocalUser(null);
+          throw new Error('This account has been suspended by administration.');
+        }
+        lastVerifiedCloudEmail = fbEmail;
+        setCurrentLocalUser(cloudRole);
+        return cloudRole;
+      }
+    }
+  }
+  return local;
 }
 
 // ============================================================
@@ -485,7 +546,10 @@ export const api = {
         if (cloudStaffRole.isSuspended) {
           throw new Error('This account has been suspended by administration.');
         }
-        await updateOwnLastLoginInFirestore(cleanEmail, payload.name, payload.avatar);
+        const updatedLogin = await updateOwnLastLoginInFirestore(cleanEmail, payload.name, payload.avatar);
+        if (updatedLogin) {
+          cloudStaffRole.lastLoginAt = new Date().toISOString();
+        }
       }
     }
 
@@ -856,6 +920,17 @@ export const api = {
           setCurrentLocalUser(null);
           throw new Error('This account has been suspended by administration.');
         }
+        const lastTs = cloudRole.lastLoginAt ? new Date(cloudRole.lastLoginAt).getTime() : 0;
+        if (!lastTs || Number.isNaN(lastTs) || Date.now() - lastTs > 5 * 60 * 1000) {
+          const stamped = await updateOwnLastLoginInFirestore(
+            fbEmail,
+            auth.currentUser.displayName || cloudRole.name,
+            auth.currentUser.photoURL || cloudRole.avatar
+          );
+          if (stamped) {
+            cloudRole.lastLoginAt = new Date().toISOString();
+          }
+        }
         setCurrentLocalUser(cloudRole);
         return cloudRole;
       }
@@ -878,6 +953,17 @@ export const api = {
             const fbEmail = auth.currentUser.email.toLowerCase().trim();
             const cloudRole = await fetchStaffRoleByEmail(fbEmail);
             if (cloudRole && !cloudRole.isSuspended) {
+              const lastTs = cloudRole.lastLoginAt ? new Date(cloudRole.lastLoginAt).getTime() : 0;
+              if (!lastTs || Number.isNaN(lastTs) || Date.now() - lastTs > 5 * 60 * 1000) {
+                const stamped = await updateOwnLastLoginInFirestore(
+                  fbEmail,
+                  auth.currentUser.displayName || cloudRole.name,
+                  auth.currentUser.photoURL || cloudRole.avatar
+                );
+                if (stamped) {
+                  cloudRole.lastLoginAt = new Date().toISOString();
+                }
+              }
               setCurrentLocalUser(cloudRole);
               return cloudRole;
             }
@@ -997,11 +1083,16 @@ export const api = {
   // ==========================================
 
   async getDedications(): Promise<DedicationRecord[]> {
-    const currentUser = getCurrentLocalUser();
+    const currentUser = await resolveActiveStaffUser();
+    const deletedIds = getDeletedDedicationIds();
+    const seedIds = new Set(INITIAL_DEDICATIONS.map((d) => d.id));
+
     let cloudList: DedicationRecord[] = [];
+    let cloudFetchOk = false;
     if (currentUser && isFirebaseStaffSignedIn() && currentUser.role !== 'parent') {
       try {
         cloudList = await fetchDedicationsFromFirestore(currentUser);
+        cloudFetchOk = true;
       } catch (e) {
         console.warn('Firestore fetch dedications notice:', e);
       }
@@ -1024,7 +1115,7 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson && cloudList.length === 0) throw err;
+        if (receivedJson && !cloudFetchOk) throw err;
       }
     } else if (currentUser) {
       const all = getLocalDedications();
@@ -1041,10 +1132,19 @@ export const api = {
       }
     }
 
-    if (cloudList.length > 0) {
+    if (cloudFetchOk) {
       const mergedMap = new Map<string, DedicationRecord>();
-      for (const item of serverList) mergedMap.set(item.id, item);
-      for (const item of cloudList) mergedMap.set(item.id, item); // cloud authoritative
+      // Only include non-seed server items that weren't deleted; Firestore is authoritative for seeded & cloud docs
+      for (const item of serverList) {
+        if (!deletedIds.has(item.id) && !seedIds.has(item.id)) {
+          mergedMap.set(item.id, item);
+        }
+      }
+      for (const item of cloudList) {
+        if (!deletedIds.has(item.id)) {
+          mergedMap.set(item.id, item);
+        }
+      }
       const merged = Array.from(mergedMap.values()).sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
@@ -1052,9 +1152,10 @@ export const api = {
       return merged;
     }
 
-    if (serverList.length > 0) {
-      saveLocalDedications(serverList);
-      return serverList;
+    const filteredServer = serverList.filter((item) => !deletedIds.has(item.id));
+    if (filteredServer.length > 0) {
+      saveLocalDedications(filteredServer);
+      return filteredServer;
     }
 
     return [];
@@ -1064,6 +1165,7 @@ export const api = {
     const uniqueId = record.id && /^[a-zA-Z0-9_\-]{3,128}$/.test(record.id)
       ? record.id
       : generateUniqueDedicationId();
+    clearDedicationDeleted(uniqueId);
     const recordWithId: Partial<DedicationRecord> = {
       ...record,
       id: uniqueId,
@@ -1238,7 +1340,7 @@ export const api = {
   },
 
   async updateDedication(id: string, updates: Partial<DedicationRecord>): Promise<DedicationRecord> {
-    const currentUser = getCurrentLocalUser();
+    const currentUser = await resolveActiveStaffUser();
     const allLocal = getLocalDedications();
     const existingLocal = allLocal.find((d) => d.id === id);
 
@@ -1298,21 +1400,23 @@ export const api = {
   },
 
   async deleteDedication(id: string): Promise<boolean> {
+    let cloudDeleted = false;
     if (isFirebaseStaffSignedIn()) {
       await deleteDedicationInFirestore(id);
+      cloudDeleted = true;
     }
 
     if (!isStaticHostingMode) {
       let receivedJson = false;
       try {
-        const res = await fetch(`/api/dedications/${id}`, {
+        const res = await fetch(`/api/dedications/${encodeURIComponent(id)}`, {
           method: 'DELETE',
           headers: getAuthHeaders()
         });
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           receivedJson = true;
-          if (!res.ok && !isFirebaseStaffSignedIn()) {
+          if (!res.ok && res.status !== 404 && !cloudDeleted) {
             const err = await res.json().catch(() => ({ error: 'Delete failed' }));
             throw new Error(err.error || 'Failed to delete record');
           }
@@ -1320,13 +1424,27 @@ export const api = {
           isStaticHostingMode = true;
         }
       } catch (err: any) {
-        if (receivedJson && !isFirebaseStaffSignedIn()) throw err;
+        if (receivedJson && !cloudDeleted) throw err;
       }
     }
+
+    markDedicationDeleted(id);
 
     let all = getLocalDedications();
     all = all.filter(d => d.id !== id);
     saveLocalDedications(all);
+
+    try {
+      const recent = JSON.parse(localStorage.getItem('dcu_parent_recent_submissions') || '[]');
+      if (Array.isArray(recent)) {
+        localStorage.setItem(
+          'dcu_parent_recent_submissions',
+          JSON.stringify(recent.filter((r: any) => r.id !== id))
+        );
+      }
+    } catch {
+      // ignore
+    }
 
     addLocalAuditLog({
       eventType: 'DEDICATION_DELETED',
@@ -1381,7 +1499,7 @@ export const api = {
   // ==========================================
 
   async getPastDedications(): Promise<PastDedicationRecord[]> {
-    const current = getCurrentLocalUser();
+    const current = await resolveActiveStaffUser();
     let cloudList: PastDedicationRecord[] = [];
     if (current && isFirebaseStaffSignedIn() && current.role !== 'fellowship_leader' && current.role !== 'parent') {
       try {
@@ -1673,7 +1791,7 @@ export const api = {
   // ==========================================
 
   async getUsers(): Promise<UserProfile[]> {
-    const current = getCurrentLocalUser();
+    const current = await resolveActiveStaffUser();
     let cloudUsers: UserProfile[] = [];
     if (current && isFirebaseStaffSignedIn() && (current.role === 'super_admin' || current.role === 'office_admin' || (current.role as string) === 'admin')) {
       try {
@@ -1710,10 +1828,14 @@ export const api = {
     for (const u of serverUsers) mergedMap.set(u.email.toLowerCase(), u);
     for (const cu of cloudUsers) {
       const prev = mergedMap.get(cu.email.toLowerCase());
+      const cuTs = cu.lastLoginAt ? new Date(cu.lastLoginAt).getTime() : 0;
+      const prevTs = prev?.lastLoginAt ? new Date(prev.lastLoginAt).getTime() : 0;
+      const newestLogin =
+        cuTs >= prevTs ? (cu.lastLoginAt || prev?.lastLoginAt) : (prev?.lastLoginAt || cu.lastLoginAt);
       mergedMap.set(cu.email.toLowerCase(), {
         ...prev,
         ...cu,
-        lastLoginAt: cu.lastLoginAt || prev?.lastLoginAt,
+        lastLoginAt: newestLogin,
       });
     }
 
@@ -1783,7 +1905,7 @@ export const api = {
   },
 
   async getInvitations(): Promise<StaffInvitation[]> {
-    const current = getCurrentLocalUser();
+    const current = await resolveActiveStaffUser();
     let cloudInvites: StaffInvitation[] = [];
     if (current && isFirebaseStaffSignedIn() && (current.role === 'super_admin' || (current.role as string) === 'admin')) {
       try {

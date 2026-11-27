@@ -67,6 +67,27 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
+export function formatFirestoreUiError(
+  error: unknown,
+  fallback = 'Operation could not be completed. Please verify your Google Cloud Sync connection and try again.'
+): string {
+  const raw = error instanceof Error ? error.message : String(error || '');
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw) as Partial<FirestoreErrorInfo>;
+    if (parsed && typeof parsed.error === 'string') {
+      if (parsed.error.includes('Missing or insufficient permissions')) {
+        const who = parsed.authInfo?.email ? ` (${parsed.authInfo.email})` : '';
+        return `Cloud permission denied while updating ${parsed.path || 'record'}. Please ensure you are signed in with your authorized church Google email${who}, refresh the page, and try again.`;
+      }
+      return parsed.error;
+    }
+  } catch {
+    // plain text error
+  }
+  return raw;
+}
+
 let connectionTested = false;
 export async function testFirestoreConnection(): Promise<boolean> {
   if (connectionTested) return true;

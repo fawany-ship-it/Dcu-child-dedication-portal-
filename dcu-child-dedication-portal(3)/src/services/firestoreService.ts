@@ -96,11 +96,14 @@ export function normalizeZone(zone?: string): DedicationRecord['selectedZone'] {
 }
 
 export function normalizeFellowship(zone: string, fellowship?: string): string {
-  const raw = (fellowship || '').trim();
+  const raw = (fellowship || '').replace(/\s+/g, ' ').trim();
   if (!raw) return zone === 'Unallocated' ? 'Unallocated - Follow-up Required' : 'General';
+  const stripped = raw.replace(/\s+(fellowship|micro[\s-]*church)$/i, '').trim();
   const z = ZONES.find((item) => item.name === zone);
   if (z) {
-    const exact = z.fellowships.find((f) => f.toLowerCase() === raw.toLowerCase());
+    const exact = z.fellowships.find(
+      (f) => f.toLowerCase() === raw.toLowerCase() || f.toLowerCase() === stripped.toLowerCase()
+    );
     if (exact) return exact;
   }
   return raw.slice(0, 100);
@@ -350,12 +353,19 @@ export async function syncLocalSubmissionsToFirestore(): Promise<number> {
         localStorage.getItem('dcu_parent_recent_submissions') || '[]'
       );
       const recoveryMap = getRecoveryMap();
+      let deletedIdSet = new Set<string>();
+      try {
+        const deletedArr = JSON.parse(localStorage.getItem('dcu_deleted_dedication_ids_v1') || '[]');
+        if (Array.isArray(deletedArr)) deletedIdSet = new Set(deletedArr);
+      } catch {
+        // ignore
+      }
 
       const candidateMap = new Map<string, Partial<DedicationRecord>>();
 
       if (Array.isArray(fullRecords)) {
         for (const rec of fullRecords) {
-          if (!rec || !rec.id || SEED_DEDICATION_IDS.has(rec.id)) continue;
+          if (!rec || !rec.id || SEED_DEDICATION_IDS.has(rec.id) || deletedIdSet.has(rec.id)) continue;
           if (!rec.childName) continue;
           candidateMap.set(`${rec.id}::${rec.childName.toLowerCase().trim()}`, rec);
         }
@@ -364,9 +374,13 @@ export async function syncLocalSubmissionsToFirestore(): Promise<number> {
       if (Array.isArray(recentRecords)) {
         for (const item of recentRecords) {
           if (!item || !item.id || !item.childName) continue;
-          if (SEED_DEDICATION_IDS.has(item.id)) continue;
+          if (SEED_DEDICATION_IDS.has(item.id) || deletedIdSet.has(item.id)) continue;
           const compKey = `${item.id}::${String(item.childName).toLowerCase().trim()}`;
           if (!candidateMap.has(compKey)) {
+            const fallbackZone = item.selectedZone ? normalizeZone(item.selectedZone) : 'Zone A';
+            const fallbackFellowship = item.selectedFellowship
+              ? normalizeFellowship(fallbackZone, item.selectedFellowship)
+              : 'General';
             candidateMap.set(compKey, {
               id: item.id,
               childName: item.childName,
@@ -375,9 +389,9 @@ export async function syncLocalSubmissionsToFirestore(): Promise<number> {
               childCountyOfBirth: 'Nairobi',
               parentPhone: item.phone || '',
               fatherPhone: item.phone || '',
-              isInFellowship: true,
-              selectedZone: 'Zone A',
-              selectedFellowship: 'General',
+              isInFellowship: fallbackZone !== 'Unallocated',
+              selectedZone: fallbackZone,
+              selectedFellowship: fallbackFellowship,
               serviceDate: item.serviceDate || 'To be scheduled by Pastoral Office',
               dataConsent: true,
               status: 'submitted',
@@ -661,11 +675,29 @@ export async function updateDedicationInFirestore(
   const dedRef = doc(db, 'dedications', id);
   const statusRef = doc(db, 'dedication_status', id);
 
+  let statusSnapExists = true;
+  let dedSnapData: Record<string, any> | null = existingRecord ? { ...existingRecord } : null;
+  try {
+    const statusSnap = await getDoc(statusRef);
+    statusSnapExists = statusSnap.exists();
+    if (!statusSnapExists) {
+      const dedSnap = await getDoc(dedRef);
+      if (dedSnap.exists()) {
+        dedSnapData = dedSnap.data();
+      }
+    }
+  } catch {
+    // Proceed with standard update if pre-flight read is skipped
+  }
+
   const batch = writeBatch(db);
+  let leaderDedUpdate: Record<string, any> | null = null;
+  let leaderStatusUpdate: Record<string, any> | null = null;
+  let leaderStatusCreatePayload: Record<string, any> | null = null;
 
   if (role === 'fellowship_leader') {
     const nextStatus = updates.leadershipConfirmed ? 'fellowship_confirmed' : 'submitted';
-    const dedUpdate: Record<string, any> = {
+    leaderDedUpdate = {
       leadershipConfirmed: Boolean(updates.leadershipConfirmed),
       fellowshipLeaderName: String(updates.fellowshipLeaderName || actor.name || 'Fellowship Leader').slice(0, 160),
       fellowshipConfirmedAt: String(updates.fellowshipConfirmedAt || new Date().toISOString()).slice(0, 64),
@@ -673,15 +705,30 @@ export async function updateDedicationInFirestore(
       updatedAt: serverTimestamp(),
     };
     if (typeof updates.fellowshipNotes === 'string') {
-      dedUpdate.fellowshipNotes = updates.fellowshipNotes.slice(0, 500);
+      leaderDedUpdate.fellowshipNotes = updates.fellowshipNotes.slice(0, 500);
     }
 
-    batch.update(dedRef, dedUpdate);
-    batch.update(statusRef, {
-      leadershipConfirmed: Boolean(updates.leadershipConfirmed),
-      status: nextStatus,
-      updatedAt: serverTimestamp(),
-    });
+    batch.update(dedRef, leaderDedUpdate);
+    if (statusSnapExists) {
+      leaderStatusUpdate = {
+        leadershipConfirmed: Boolean(updates.leadershipConfirmed),
+        status: nextStatus,
+        updatedAt: serverTimestamp(),
+      };
+      batch.update(statusRef, leaderStatusUpdate);
+    } else if (dedSnapData) {
+      const mergedSource = {
+        ...dedSnapData,
+        ...leaderDedUpdate,
+        id,
+        createdAt: serverTimestamp(),
+      };
+      leaderStatusCreatePayload = await buildDedicationStatusPayload(
+        mergedSource,
+        mergedSource as unknown as Partial<DedicationRecord>
+      );
+      batch.set(statusRef, leaderStatusCreatePayload);
+    }
   } else {
     // Super Admin, Office Admin, or Pastor update
     const allowedKeys = new Set([
@@ -698,12 +745,16 @@ export async function updateDedicationInFirestore(
 
     const dedUpdate: Record<string, any> = { updatedAt: serverTimestamp() };
     for (const [k, v] of Object.entries(updates)) {
-      if (allowedKeys.has(k) && v !== undefined) {
+      if (allowedKeys.has(k) && v !== undefined && v !== null) {
         dedUpdate[k] = v;
       }
     }
     if (dedUpdate.selectedZone) {
       dedUpdate.selectedZone = normalizeZone(dedUpdate.selectedZone);
+    }
+    if (dedUpdate.selectedFellowship !== undefined) {
+      const targetZone = dedUpdate.selectedZone || normalizeZone(dedSnapData?.selectedZone || 'Zone A');
+      dedUpdate.selectedFellowship = normalizeFellowship(targetZone, String(dedUpdate.selectedFellowship));
     }
 
     const statusUpdate: Record<string, any> = { updatedAt: serverTimestamp() };
@@ -722,18 +773,60 @@ export async function updateDedicationInFirestore(
 
     if (updates.fatherPhone !== undefined || updates.motherPhone !== undefined || updates.parentPhone !== undefined) {
       statusUpdate.phoneHashes = await buildPhoneHashes({
-        ...existingRecord,
+        ...(dedSnapData as Partial<DedicationRecord>),
         ...updates,
       });
     }
 
     batch.update(dedRef, dedUpdate);
-    batch.update(statusRef, statusUpdate);
+    if (statusSnapExists) {
+      batch.update(statusRef, statusUpdate);
+    } else if (dedSnapData) {
+      const mergedSource = {
+        ...dedSnapData,
+        ...dedUpdate,
+        id,
+        selectedZone: normalizeZone(dedUpdate.selectedZone || dedSnapData.selectedZone),
+        selectedFellowship: normalizeFellowship(
+          normalizeZone(dedUpdate.selectedZone || dedSnapData.selectedZone),
+          dedUpdate.selectedFellowship || dedSnapData.selectedFellowship
+        ),
+        createdAt: serverTimestamp(),
+      };
+      const statusPayload = await buildDedicationStatusPayload(
+        mergedSource,
+        mergedSource as unknown as Partial<DedicationRecord>
+      );
+      batch.set(statusRef, statusPayload);
+    }
   }
 
   try {
     await batch.commit();
-  } catch (error) {
+  } catch (error: any) {
+    const isPermDenied =
+      error?.code === 'permission-denied' ||
+      String(error?.message || '').includes('Missing or insufficient permissions');
+
+    if (role === 'fellowship_leader' && isPermDenied && leaderDedUpdate) {
+      try {
+        await updateDoc(dedRef, leaderDedUpdate);
+      } catch (dedErr) {
+        handleFirestoreError(dedErr, OperationType.UPDATE, `dedications/${id}`);
+      }
+
+      try {
+        if (leaderStatusUpdate) {
+          await updateDoc(statusRef, leaderStatusUpdate);
+        } else if (leaderStatusCreatePayload) {
+          await setDoc(statusRef, leaderStatusCreatePayload);
+        }
+        return;
+      } catch (statusErr) {
+        handleFirestoreError(statusErr, OperationType.UPDATE, `dedication_status/${id}`);
+      }
+    }
+
     handleFirestoreError(error, OperationType.UPDATE, `dedications/${id}`);
   }
 }
@@ -824,8 +917,15 @@ function buildStaffRolePayload(u: Partial<UserProfile> & { email: string }): Rec
     createdAt: serverTimestamp(),
   };
 
-  if (u.assignedZone) docPayload.assignedZone = normalizeZone(u.assignedZone).slice(0, 40);
-  if (u.assignedFellowship) docPayload.assignedFellowship = String(u.assignedFellowship).trim().slice(0, 100);
+  if (u.assignedZone) {
+    const normZone = normalizeZone(u.assignedZone).slice(0, 40);
+    docPayload.assignedZone = normZone;
+    if (u.assignedFellowship) {
+      docPayload.assignedFellowship = normalizeFellowship(normZone, String(u.assignedFellowship)).slice(0, 100);
+    }
+  } else if (u.assignedFellowship) {
+    docPayload.assignedFellowship = String(u.assignedFellowship).trim().slice(0, 100);
+  }
   if (u.avatar) docPayload.avatar = String(u.avatar).slice(0, 400);
   if (u.phone) docPayload.phone = String(u.phone).slice(0, 40);
   if (u.lastLoginAt) docPayload.lastLoginAt = String(u.lastLoginAt).slice(0, 64);
@@ -863,20 +963,22 @@ export async function updateOwnLastLoginInFirestore(
   email: string,
   name?: string,
   avatar?: string
-): Promise<void> {
+): Promise<boolean> {
   const cleanEmail = email.toLowerCase().trim();
   const ref = doc(db, 'staff_roles', cleanEmail);
   try {
     const snap = await getDoc(ref);
-    if (!snap.exists()) return;
+    if (!snap.exists()) return false;
     const patch: Record<string, any> = {
       lastLoginAt: new Date().toISOString(),
     };
     if (name && name.trim()) patch.name = name.trim().slice(0, 160);
     if (avatar && avatar.trim()) patch.avatar = avatar.trim().slice(0, 400);
     await updateDoc(ref, patch);
-  } catch {
-    // non-fatal if staff doc not yet created or permission scoped
+    return true;
+  } catch (err) {
+    console.warn(`Could not update lastLoginAt for ${cleanEmail}:`, err);
+    return false;
   }
 }
 
@@ -894,8 +996,17 @@ export async function syncStaffRoleToFirestore(
       if (staff.role) {
         patch.role = (staff.role as string) === 'admin' ? 'super_admin' : staff.role;
       }
-      if (staff.assignedZone !== undefined) patch.assignedZone = staff.assignedZone ? normalizeZone(staff.assignedZone) : '';
-      if (staff.assignedFellowship !== undefined) patch.assignedFellowship = String(staff.assignedFellowship || '').slice(0, 100);
+      const resolvedZone =
+        staff.assignedZone !== undefined
+          ? (staff.assignedZone ? normalizeZone(staff.assignedZone) : '')
+          : (existing.data().assignedZone || '');
+      if (staff.assignedZone !== undefined) patch.assignedZone = resolvedZone;
+      if (staff.assignedFellowship !== undefined) {
+        const rawFel = String(staff.assignedFellowship || '').trim();
+        patch.assignedFellowship = rawFel
+          ? (resolvedZone ? normalizeFellowship(resolvedZone, rawFel) : rawFel).slice(0, 100)
+          : '';
+      }
       if (staff.isSuspended !== undefined) patch.isSuspended = Boolean(staff.isSuspended);
       if (staff.lastLoginAt) patch.lastLoginAt = staff.lastLoginAt.slice(0, 64);
       if (Object.keys(patch).length > 0) {
@@ -959,7 +1070,13 @@ export async function saveInvitationToFirestore(inv: StaffInvitation): Promise<v
   };
   if (inv.name) payload.name = inv.name.trim().slice(0, 160);
   if (inv.assignedZone) payload.assignedZone = normalizeZone(inv.assignedZone).slice(0, 40);
-  if (inv.assignedFellowship) payload.assignedFellowship = inv.assignedFellowship.trim().slice(0, 100);
+  if (inv.assignedFellowship) {
+    const zoneForInv = payload.assignedZone || '';
+    payload.assignedFellowship = (zoneForInv
+      ? normalizeFellowship(zoneForInv, inv.assignedFellowship)
+      : inv.assignedFellowship.trim()
+    ).slice(0, 100);
+  }
   if (inv.usedAt) payload.usedAt = inv.usedAt.slice(0, 64);
   if (inv.revokedAt) payload.revokedAt = inv.revokedAt.slice(0, 64);
   if (inv.revokedBy) payload.revokedBy = inv.revokedBy.slice(0, 160);
@@ -1149,17 +1266,104 @@ export async function seedInitialDataIfAdmin(
       }
     }
 
-    // 2. Seed initial dedications if dedications collection is empty, and backfill any local non-seed submissions
-    const dedSnap = await getDocs(query(collection(db, 'dedications'), limit(1)));
-    if (dedSnap.empty) {
-      await adminUpsertDedicationsBatch([...INITIAL_DEDICATIONS, ...extraDedications]);
-    } else if (extraDedications.length > 0) {
-      await adminUpsertDedicationsBatch(
-        extraDedications.filter((d) => !SEED_DEDICATION_IDS.has(d.id))
-      );
+    // 2. Ensure any existing staff_roles docs have normalized zone & fellowship values for strict rules matching
+    for (const docSnap of staffExisting.docs) {
+      const d = docSnap.data();
+      if (d.assignedZone || d.assignedFellowship) {
+        const normZone = d.assignedZone ? normalizeZone(d.assignedZone) : '';
+        const normFel = d.assignedFellowship
+          ? (normZone ? normalizeFellowship(normZone, String(d.assignedFellowship)) : String(d.assignedFellowship).trim())
+          : '';
+        if (normZone !== (d.assignedZone || '') || normFel !== (d.assignedFellowship || '')) {
+          await updateDoc(docSnap.ref, {
+            assignedZone: normZone,
+            assignedFellowship: normFel,
+          }).catch(() => {});
+        }
+      }
     }
 
-    // 3. Seed historical archive if empty
+    // 3. Seed initial dedications if dedications collection is empty, backfill any local non-seed submissions,
+    // and normalize legacy fellowship names so exact Firestore security rules always match fellowship leaders
+    const dedSnap = await getDocs(collection(db, 'dedications'));
+    if (dedSnap.empty) {
+      await adminUpsertDedicationsBatch([...INITIAL_DEDICATIONS, ...extraDedications]);
+    } else {
+      if (extraDedications.length > 0) {
+        await adminUpsertDedicationsBatch(
+          extraDedications.filter((d) => !SEED_DEDICATION_IDS.has(d.id))
+        );
+      }
+      const statusSnapAll = await getDocs(collection(db, 'dedication_status')).catch(() => null);
+      const statusById = new Map<string, Record<string, any>>();
+      if (statusSnapAll) {
+        for (const sDoc of statusSnapAll.docs) {
+          statusById.set(sDoc.id, sDoc.data());
+        }
+      }
+
+      for (const docSnap of dedSnap.docs) {
+        const d = docSnap.data();
+        const normZone = normalizeZone(d.selectedZone);
+        const normFel = normalizeFellowship(normZone, d.selectedFellowship);
+        const dedNeedsNorm = normZone !== d.selectedZone || normFel !== d.selectedFellowship;
+        const existingStatus = statusById.get(docSnap.id);
+
+        if (!existingStatus) {
+          if (dedNeedsNorm) {
+            await updateDoc(docSnap.ref, {
+              selectedZone: normZone,
+              selectedFellowship: normFel,
+              updatedAt: serverTimestamp(),
+            }).catch(() => {});
+          }
+          const statusPayload = await buildDedicationStatusPayload(
+            {
+              ...d,
+              id: docSnap.id,
+              selectedZone: normZone,
+              selectedFellowship: normFel,
+              createdAt: serverTimestamp(),
+            },
+            d as Partial<DedicationRecord>
+          );
+          await setDoc(doc(db, 'dedication_status', docSnap.id), statusPayload).catch(() => {});
+        } else {
+          const statusNeedsSync =
+            existingStatus.selectedZone !== normZone ||
+            existingStatus.selectedFellowship !== normFel ||
+            existingStatus.status !== d.status ||
+            Boolean(existingStatus.leadershipConfirmed) !== Boolean(d.leadershipConfirmed) ||
+            Boolean(existingStatus.officeApproved) !== Boolean(d.officeApproved) ||
+            Boolean(existingStatus.certificateIssued) !== Boolean(d.certificateIssued);
+
+          if (dedNeedsNorm || statusNeedsSync) {
+            const batch = writeBatch(db);
+            if (dedNeedsNorm) {
+              batch.update(docSnap.ref, {
+                selectedZone: normZone,
+                selectedFellowship: normFel,
+                updatedAt: serverTimestamp(),
+              });
+            }
+            if (dedNeedsNorm || statusNeedsSync) {
+              batch.update(doc(db, 'dedication_status', docSnap.id), {
+                selectedZone: normZone,
+                selectedFellowship: normFel,
+                status: d.status,
+                leadershipConfirmed: Boolean(d.leadershipConfirmed),
+                officeApproved: Boolean(d.officeApproved),
+                certificateIssued: Boolean(d.certificateIssued),
+                updatedAt: serverTimestamp(),
+              });
+            }
+            await batch.commit().catch(() => {});
+          }
+        }
+      }
+    }
+
+    // 4. Seed historical archive if empty
     const pastSnap = await getDocs(query(collection(db, 'past_dedications'), limit(1)));
     if (pastSnap.empty) {
       const batch = writeBatch(db);

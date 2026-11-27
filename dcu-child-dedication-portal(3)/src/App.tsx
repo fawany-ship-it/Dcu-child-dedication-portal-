@@ -1,7 +1,7 @@
 /**
  * Deliverance Church International Utawala - The Church of Choice
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { About } from './components/About';
 import { Home } from './components/Home';
@@ -17,7 +17,7 @@ import { AuthModal } from './components/AuthModal';
 import { ChurchLogo } from './components/ChurchLogo';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { DedicationRecord, PastDedicationRecord } from './types';
-import { api } from './services/api';
+import { api, getDeletedDedicationIds } from './services/api';
 import { testFirestoreConnection } from './lib/firebase';
 import {
   syncLocalSubmissionsToFirestore,
@@ -54,6 +54,8 @@ function MainApp() {
   const [selectedCertificate, setSelectedCertificate] = useState<DedicationRecord | null>(null);
   const [trackerQuery, setTrackerQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [syncPermissionError, setSyncPermissionError] = useState('');
+  const seenCloudIdsRef = useRef<Set<string>>(new Set());
 
   // Verify Firestore connection and recover any pending local submissions on mount
   useEffect(() => {
@@ -65,9 +67,13 @@ function MainApp() {
   useEffect(() => {
     let activeFlag = true;
     let unsubscribeDedications: (() => void) | undefined;
+    seenCloudIdsRef.current = new Set();
+    setSyncPermissionError('');
 
     async function loadData() {
       try {
+        await syncLocalSubmissionsToFirestore().catch(() => {});
+
         const [active, past] = await Promise.all([
           api.getDedications(),
           api.getPastDedications()
@@ -90,16 +96,36 @@ function MainApp() {
             user,
             (cloudRecords) => {
               if (!activeFlag) return;
+              setSyncPermissionError('');
+              const deletedIds = getDeletedDedicationIds();
+              const nextCloudIds = new Set(cloudRecords.map((c) => c.id));
               setDedications((prev) => {
                 const merged = new Map<string, DedicationRecord>();
-                for (const p of prev) merged.set(p.id, p);
-                for (const c of cloudRecords) merged.set(c.id, c);
+                for (const p of prev) {
+                  if (deletedIds.has(p.id)) continue;
+                  // Remove any item previously synced from Firestore that has now been deleted in Firestore
+                  if (seenCloudIdsRef.current.has(p.id) && !nextCloudIds.has(p.id)) continue;
+                  merged.set(p.id, p);
+                }
+                for (const c of cloudRecords) {
+                  if (!deletedIds.has(c.id)) {
+                    merged.set(c.id, c);
+                  }
+                }
+                seenCloudIdsRef.current = nextCloudIds;
                 return Array.from(merged.values()).sort(
                   (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
                 );
               });
             },
-            (err) => console.warn('Firestore real-time subscription notice:', err)
+            (err) => {
+              console.warn('Firestore real-time subscription notice:', err);
+              if (activeFlag) {
+                setSyncPermissionError(
+                  `Unable to load live cloud records for ${user.email}. Ensure you are signed into Google with your invited email and that the Super Administrator has opened Office Console to sync staff permissions.`
+                );
+              }
+            }
           );
         }
       } catch (e) {
@@ -126,16 +152,14 @@ function MainApp() {
       setDedications((prev) => prev.map((d) => (d.id === id ? updated : d)));
     } catch (e) {
       console.error('Update failed', e);
+      throw e;
     }
   };
 
   const handleDeleteDedication = async (id: string) => {
-    try {
-      await api.deleteDedication(id);
-      setDedications((prev) => prev.filter((d) => d.id !== id));
-    } catch (e) {
-      console.error('Delete failed', e);
-    }
+    await api.deleteDedication(id);
+    seenCloudIdsRef.current.delete(id);
+    setDedications((prev) => prev.filter((d) => d.id !== id));
   };
 
   const handleBulkImport = async (records: any[]) => {
@@ -263,6 +287,7 @@ function MainApp() {
             <LeadershipPortal
               dedications={dedications}
               onUpdateDedication={handleUpdateDedication}
+              syncPermissionError={syncPermissionError}
             />
           ) : (
             <AccessDeniedGate

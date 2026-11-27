@@ -798,9 +798,16 @@ async function startServer() {
       }
       let filtered = list.filter(d => d.selectedZone === zone);
       if (req.user!.assignedFellowship) {
-        const targetFellowship = req.user!.assignedFellowship.toLowerCase().trim();
+        const targetFellowship = req.user!.assignedFellowship
+          .replace(/\s+(fellowship|micro[\s-]*church)$/i, '')
+          .toLowerCase()
+          .trim();
         filtered = filtered.filter(
-          d => (d.selectedFellowship || '').toLowerCase().trim() === targetFellowship
+          d =>
+            (d.selectedFellowship || '')
+              .replace(/\s+(fellowship|micro[\s-]*church)$/i, '')
+              .toLowerCase()
+              .trim() === targetFellowship
         );
       }
       return res.json(filtered);

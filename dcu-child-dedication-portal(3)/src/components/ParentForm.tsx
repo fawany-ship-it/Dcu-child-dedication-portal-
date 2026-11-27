@@ -16,6 +16,7 @@ export function ParentForm({ onSubmitSuccess, onNavigateToTracker }: ParentFormP
   const [isInFellowship, setIsInFellowship] = useState<'yes' | 'no'>('yes');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedRecord, setSubmittedRecord] = useState<DedicationRecord | null>(null);
+  const [formError, setFormError] = useState('');
 
   const [formData, setFormData] = useState({
     childName: '',
@@ -67,19 +68,20 @@ export function ParentForm({ onSubmitSuccess, onNavigateToTracker }: ParentFormP
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
 
     if (!formData.dataConsent) {
-      alert('You must consent to the Data Privacy and Protection Act to proceed with registration.');
+      setFormError('You must consent to the Data Privacy and Protection Act to proceed with registration.');
       return;
     }
 
     if (!formData.childName.trim()) {
-      alert('Please enter the child\'s full name.');
+      setFormError('Please enter the child\'s full name.');
       return;
     }
 
     if (!formData.fatherPhone.trim() && !formData.motherPhone.trim()) {
-      alert('Please provide at least one active phone number for fellowship leader follow-up.');
+      setFormError('Please provide at least one active phone number for fellowship leader follow-up.');
       return;
     }
 
@@ -126,6 +128,8 @@ export function ParentForm({ onSubmitSuccess, onNavigateToTracker }: ParentFormP
             childName: savedRecord.childName,
             submittedAt: savedRecord.createdAt,
             serviceDate: savedRecord.serviceDate,
+            selectedZone: savedRecord.selectedZone,
+            selectedFellowship: savedRecord.selectedFellowship,
             phone: savedRecord.parentPhone || savedRecord.fatherPhone || savedRecord.motherPhone
           },
           ...stored.filter(
@@ -144,9 +148,9 @@ export function ParentForm({ onSubmitSuccess, onNavigateToTracker }: ParentFormP
 
       setSubmittedRecord(savedRecord);
       onSubmitSuccess(savedRecord);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error submitting dedication:', err);
-      alert('Submission failed. Please check connection and try again.');
+      setFormError(err?.message || 'Submission failed. Please check your internet connection and try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -615,6 +619,13 @@ export function ParentForm({ onSubmitSuccess, onNavigateToTracker }: ParentFormP
             </div>
           </div>
         </section>
+
+        {formError && (
+          <div className="p-4 rounded-2xl bg-red-50 border border-red-300 text-xs sm:text-sm text-red-700 flex items-center gap-2.5">
+            <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
+            <span className="font-semibold">{formError}</span>
+          </div>
+        )}
 
         {/* Submit button */}
         <button
